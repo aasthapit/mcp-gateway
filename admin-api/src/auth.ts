@@ -4,7 +4,13 @@
  * `aud` must contain ADMIN_JWT_AUDIENCE (mcp-admin) and the roles claim must contain
  * ADMIN_REQUIRED_ROLE (mcp-admin). Missing/invalid token → 401, valid without the role → 403.
  */
-import { createRemoteJWKSet, errors as joseErrors, type JWTPayload, type JWTVerifyGetKey, jwtVerify } from "jose";
+import {
+  createRemoteJWKSet,
+  errors as joseErrors,
+  type JWTPayload,
+  type JWTVerifyGetKey,
+  jwtVerify,
+} from "jose";
 import type { FastifyRequest } from "fastify";
 import type { Config } from "./config.js";
 
@@ -50,7 +56,9 @@ export function rolesFrom(claims: Record<string, unknown>, path: string): string
 export type Verifier = (token: string) => Promise<Principal>;
 
 async function discoverJwks(issuer: string, timeoutMs: number): Promise<URL> {
-  const res = await fetch(`${issuer}/.well-known/openid-configuration`, { signal: AbortSignal.timeout(timeoutMs) });
+  const res = await fetch(`${issuer}/.well-known/openid-configuration`, {
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!res.ok) throw new Error(`OIDC discovery for ${issuer}: HTTP ${res.status}`);
   const body = (await res.json()) as { issuer?: string; jwks_uri?: string };
   if (body.issuer && body.issuer.replace(/\/+$/, "") !== issuer) {
@@ -61,11 +69,13 @@ async function discoverJwks(issuer: string, timeoutMs: number): Promise<URL> {
 }
 
 export function createVerifier(cfg: Config, keyOverride?: JWTVerifyGetKey): Verifier {
-  let keys: Promise<JWTVerifyGetKey> | undefined = keyOverride ? Promise.resolve(keyOverride) : undefined;
+  let keys: Promise<JWTVerifyGetKey> | undefined = keyOverride
+    ? Promise.resolve(keyOverride)
+    : undefined;
   const getKeys = () => {
-    keys ??= (cfg.jwksUrl ? Promise.resolve(new URL(cfg.jwksUrl)) : discoverJwks(cfg.oidcIssuer, 5_000)).then(
-      (url) => createRemoteJWKSet(url, { cooldownDuration: 30_000, cacheMaxAge: 600_000 }),
-    );
+    keys ??= (
+      cfg.jwksUrl ? Promise.resolve(new URL(cfg.jwksUrl)) : discoverJwks(cfg.oidcIssuer, 5_000)
+    ).then((url) => createRemoteJWKSet(url, { cooldownDuration: 30_000, cacheMaxAge: 600_000 }));
     // A failed discovery is retried on the next request instead of being cached forever.
     keys.catch(() => {
       keys = undefined;

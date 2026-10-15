@@ -26,7 +26,9 @@ import {
   waitForGuest,
 } from "../../scripts/stack.js";
 
-const live = (await reachable(`${ISSUER}/.well-known/openid-configuration`)) && process.env.ADMIN_SKIP_LIVE !== "1";
+const live =
+  (await reachable(`${ISSUER}/.well-known/openid-configuration`)) &&
+  process.env.ADMIN_SKIP_LIVE !== "1";
 
 describe.skipIf(!live)("admin API against the local stack", () => {
   const id = `it-${randomBytes(3).toString("hex")}`;
@@ -34,12 +36,27 @@ describe.skipIf(!live)("admin API against the local stack", () => {
   let app: FastifyInstance;
   let mongo: { client: MongoClient; db: Db };
   let admin: string;
-  const call = (method: "GET" | "PUT" | "POST" | "DELETE", url: string, payload?: object, token = admin) =>
-    app.inject({ method, url, headers: { authorization: `Bearer ${token}` }, ...(payload ? { payload } : {}) });
+  const call = (
+    method: "GET" | "PUT" | "POST" | "DELETE",
+    url: string,
+    payload?: object,
+    token = admin,
+  ) =>
+    app.inject({
+      method,
+      url,
+      headers: { authorization: `Bearer ${token}` },
+      ...(payload ? { payload } : {}),
+    });
 
   beforeAll(async () => {
     gw = await startGateway();
-    const config = loadConfig(process.env, { oidcIssuer: ISSUER, mongoUri: MONGO_URI, gatewayUrl: gw.url, gatewayToken: gw.token });
+    const config = loadConfig(process.env, {
+      oidcIssuer: ISSUER,
+      mongoUri: MONGO_URI,
+      gatewayUrl: gw.url,
+      gatewayToken: gw.token,
+    });
     mongo = await connectMongo(config.mongoUri, config.mongoDb);
     app = await buildApp({
       config,
@@ -71,13 +88,25 @@ describe.skipIf(!live)("admin API against the local stack", () => {
   });
 
   it("a toolset edit through the API changes the guest's tools/list within 2 s", async () => {
-    let r = await call("PUT", `/api/toolsets/${id}`, { enabled: true, allow: [], description: "admin-api integration test" });
+    let r = await call("PUT", `/api/toolsets/${id}`, {
+      enabled: true,
+      allow: [],
+      description: "admin-api integration test",
+    });
     expect(r.statusCode).toBe(200);
-    r = await call("PUT", `/api/grants/${id}`, { enabled: true, subject: { kind: "anonymous" }, toolsets: [id] });
+    r = await call("PUT", `/api/grants/${id}`, {
+      enabled: true,
+      subject: { kind: "anonymous" },
+      toolsets: [id],
+    });
     expect(r.json()).toMatchObject({ op: "create", warnings: [] });
     expect((await waitForGuest(gw.url, (n) => !n.has(PRIVATE_TOOL), "baseline")) >= 0).toBe(true);
 
-    r = await call("PUT", `/api/toolsets/${id}`, { enabled: true, allow: [PRIVATE_TOOL], description: "admin-api integration test" });
+    r = await call("PUT", `/api/toolsets/${id}`, {
+      enabled: true,
+      allow: [PRIVATE_TOOL],
+      description: "admin-api integration test",
+    });
     expect(r.json().op).toBe("update");
     const v1 = r.json().version as number;
     const took = await waitForGuest(gw.url, (n) => n.has(PRIVATE_TOOL), "toolset edit");
@@ -96,7 +125,10 @@ describe.skipIf(!live)("admin API against the local stack", () => {
     await waitForGuest(gw.url, (n) => !n.has(PRIVATE_TOOL), "grant delete");
     expect((await call("DELETE", `/api/toolsets/${id}`)).statusCode).toBe(200);
 
-    const history = (await call("GET", `/api/history?id=${id}&limit=10`)).json().items as { op: string; collection: string }[];
+    const history = (await call("GET", `/api/history?id=${id}&limit=10`)).json().items as {
+      op: string;
+      collection: string;
+    }[];
     expect(history.map((h) => `${h.collection}:${h.op}`)).toEqual([
       "toolsets:delete",
       "grants:delete",
@@ -108,8 +140,12 @@ describe.skipIf(!live)("admin API against the local stack", () => {
 
   it("catalog and upstream health come from the gateway", async () => {
     const catalog = (await call("GET", "/api/catalog")).json();
-    expect(catalog.tools.map((t: { namespaced_name: string }) => t.namespaced_name)).toContain(PRIVATE_TOOL);
+    expect(catalog.tools.map((t: { namespaced_name: string }) => t.namespaced_name)).toContain(
+      PRIVATE_TOOL,
+    );
     const health = (await call("GET", "/api/upstreams/health")).json();
-    expect(Object.keys(health.upstreams)).toEqual(expect.arrayContaining(["sample-public", "sample-private"]));
+    expect(Object.keys(health.upstreams)).toEqual(
+      expect.arrayContaining(["sample-public", "sample-private"]),
+    );
   });
 });

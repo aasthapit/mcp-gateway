@@ -13,10 +13,16 @@ export function base64url(obj: unknown): string {
   return Buffer.from(JSON.stringify(obj), "utf8").toString("base64url");
 }
 
-export function createGatewayClient(baseUrl: string, token: string | undefined, timeoutMs: number): GatewayClient {
+export function createGatewayClient(
+  baseUrl: string,
+  token: string | undefined,
+  timeoutMs: number,
+): GatewayClient {
   async function call(method: "GET" | "POST", path: string, query?: Record<string, string>) {
     if (!token) {
-      throw new HttpError(503, { error: "gateway proxy disabled: ADMIN_GATEWAY_INTERNAL_TOKEN is not set" });
+      throw new HttpError(503, {
+        error: "gateway proxy disabled: ADMIN_GATEWAY_INTERNAL_TOKEN is not set",
+      });
     }
     const url = new URL(baseUrl + path);
     for (const [k, v] of Object.entries(query ?? {})) url.searchParams.set(k, v);
@@ -28,7 +34,9 @@ export function createGatewayClient(baseUrl: string, token: string | undefined, 
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
-      throw new HttpError(502, { error: `gateway unreachable at ${baseUrl}: ${(err as Error).message}` });
+      throw new HttpError(502, {
+        error: `gateway unreachable at ${baseUrl}: ${(err as Error).message}`,
+      });
     }
     const text = await res.text();
     let body: unknown;

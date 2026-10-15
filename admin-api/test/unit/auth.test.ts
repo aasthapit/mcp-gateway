@@ -1,11 +1,20 @@
 import { createLocalJWKSet, exportJWK, generateKeyPair, type JWTPayload, SignJWT } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
-import { AuthError, bearerToken, createVerifier, rolesFrom, type Verifier } from "../../src/auth.js";
+import {
+  AuthError,
+  bearerToken,
+  createVerifier,
+  rolesFrom,
+  type Verifier,
+} from "../../src/auth.js";
 import { loadConfig } from "../../src/config.js";
 
 const ISS = "https://idp.test/realms/mcp";
 const config = loadConfig({ ADMIN_OIDC_ISSUER: ISS });
-let sign: (claims: JWTPayload, opts?: { alg?: string; exp?: string; key?: CryptoKey }) => Promise<string>;
+let sign: (
+  claims: JWTPayload,
+  opts?: { alg?: string; exp?: string; key?: CryptoKey },
+) => Promise<string>;
 let verify: Verifier;
 let otherKey: CryptoKey;
 
@@ -22,7 +31,13 @@ beforeAll(async () => {
       .sign(opts.key ?? privateKey);
 });
 
-const admin = { iss: ISS, aud: ["mcp-admin"], sub: "u-1", preferred_username: "admin1", realm_access: { roles: ["mcp-admin"] } };
+const admin = {
+  iss: ISS,
+  aud: ["mcp-admin"],
+  sub: "u-1",
+  preferred_username: "admin1",
+  realm_access: { roles: ["mcp-admin"] },
+};
 
 async function rejection(p: Promise<unknown>): Promise<AuthError> {
   const err = await p.then(
@@ -40,7 +55,9 @@ describe("createVerifier", () => {
   });
 
   it("403 for a valid token without the role", async () => {
-    const err = await rejection(verify(await sign({ ...admin, realm_access: { roles: ["mcp-developer"] } })));
+    const err = await rejection(
+      verify(await sign({ ...admin, realm_access: { roles: ["mcp-developer"] } })),
+    );
     expect([err.status, err.code]).toEqual([403, "insufficient_role"]);
   });
 
@@ -74,7 +91,10 @@ describe("createVerifier", () => {
 
 describe("helpers", () => {
   it("rolesFrom reads dotted paths, arrays and space-separated strings", () => {
-    expect(rolesFrom({ realm_access: { roles: ["a", 1, "b"] } }, "realm_access.roles")).toEqual(["a", "b"]);
+    expect(rolesFrom({ realm_access: { roles: ["a", 1, "b"] } }, "realm_access.roles")).toEqual([
+      "a",
+      "b",
+    ]);
     expect(rolesFrom({ scp: "x y" }, "scp")).toEqual(["x", "y"]);
     expect(rolesFrom({}, "roles")).toEqual([]);
   });

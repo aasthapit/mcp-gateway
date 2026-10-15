@@ -48,7 +48,9 @@ export function pruneBranchErrors(errors: ErrorObject[]): ErrorObject[] {
       const branch = e.schemaPath.slice(prefix.length).split("/")[0] ?? "";
       branches.set(branch, [...(branches.get(branch) ?? []), e]);
     }
-    const mismatched = [...branches.entries()].filter(([, errs]) => errs.some((e) => e.keyword === "enum"));
+    const mismatched = [...branches.entries()].filter(([, errs]) =>
+      errs.some((e) => e.keyword === "enum"),
+    );
     if (mismatched.length === 0 || mismatched.length === branches.size) continue;
     const drop = new Set(mismatched.flatMap(([, errs]) => errs));
     out = out.filter((e) => !drop.has(e));
@@ -91,7 +93,13 @@ export function buildValidators(dir: string): Validators {
   // The files are draft-04 (Mongo's $jsonSchema dialect); draft-04 identifies schemas by
   // `id`, so the `$id` URL is dropped before compiling. strictRequired is off because the
   // upstream schema says "transport http needs url" as `anyOf: [{properties, required}]`.
-  const ajv = new Ajv04({ allErrors: true, strict: true, strictTypes: false, strictRequired: false, allowUnionTypes: true });
+  const ajv = new Ajv04({
+    allErrors: true,
+    strict: true,
+    strictTypes: false,
+    strictRequired: false,
+    allowUnionTypes: true,
+  });
   addFormats(ajv);
   const compiled = {} as Record<Collection, ValidateFunction>;
   for (const name of COLLECTIONS) {

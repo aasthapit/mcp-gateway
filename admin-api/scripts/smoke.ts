@@ -43,7 +43,10 @@ async function main(): Promise<void> {
   const call = async (method: string, path: string, body?: unknown, token = admin) => {
     const res = await fetch(api + path, {
       method,
-      headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, body: (await res.json()) as Record<string, any> };
@@ -57,39 +60,57 @@ async function main(): Promise<void> {
     const anon = await fetch(`${api}/api/meta`);
     if (anon.status !== 401) throw new Error(`no token: expected 401, got ${anon.status}`);
     const dev1 = await call("GET", "/api/meta", undefined, await password("dev1"));
-    if (dev1.status !== 401 && dev1.status !== 403) throw new Error(`dev1: expected 401/403, got ${dev1.status}`);
+    if (dev1.status !== 401 && dev1.status !== 403)
+      throw new Error(`dev1: expected 401/403, got ${dev1.status}`);
     ok(`no token -> 401, dev1 (no aud=mcp-admin / no role) -> ${dev1.status}`);
 
     admin = await password("admin1");
     const got = await call("GET", `/api/toolsets/${TOOLSET}`);
-    if (got.status !== 200) throw new Error(`GET toolset ${TOOLSET}: ${got.status} ${JSON.stringify(got.body)} (make seed?)`);
+    if (got.status !== 200)
+      throw new Error(
+        `GET toolset ${TOOLSET}: ${got.status} ${JSON.stringify(got.body)} (make seed?)`,
+      );
     const { updatedAt: _a, updatedBy: _b, ...doc } = got.body;
     original = doc;
     const allow = (doc.allow as string[]).filter((t) => t !== PRIVATE_TOOL);
 
-    const put = await call("PUT", `/api/toolsets/${TOOLSET}`, { ...doc, allow: [...allow, PRIVATE_TOOL] });
+    const put = await call("PUT", `/api/toolsets/${TOOLSET}`, {
+      ...doc,
+      allow: [...allow, PRIVATE_TOOL],
+    });
     if (put.status !== 200) throw new Error(`PUT: ${put.status} ${JSON.stringify(put.body)}`);
     let took = await waitForGuest(gw.url, (n) => n.has(PRIVATE_TOOL), "admin-api toolset edit");
-    ok(`admin1 PUT /api/toolsets/${TOOLSET} (meta.version ${put.body.version}); guest sees ${PRIVATE_TOOL} after ${took.toFixed(2)}s`);
+    ok(
+      `admin1 PUT /api/toolsets/${TOOLSET} (meta.version ${put.body.version}); guest sees ${PRIVATE_TOOL} after ${took.toFixed(2)}s`,
+    );
 
     const preview = await call("POST", "/api/preview", { kind: "anonymous" });
     if (!(preview.body.tools as string[] | undefined)?.includes(PRIVATE_TOOL)) {
-      throw new Error(`preview for a guest should include ${PRIVATE_TOOL}: ${JSON.stringify(preview.body)}`);
+      throw new Error(
+        `preview for a guest should include ${PRIVATE_TOOL}: ${JSON.stringify(preview.body)}`,
+      );
     }
-    ok(`POST /api/preview {kind: anonymous} lists ${PRIVATE_TOOL} (grants ${JSON.stringify(preview.body.grants)})`);
+    ok(
+      `POST /api/preview {kind: anonymous} lists ${PRIVATE_TOOL} (grants ${JSON.stringify(preview.body.grants)})`,
+    );
 
     const revert = await call("PUT", `/api/toolsets/${TOOLSET}`, { ...doc, allow });
-    if (revert.status !== 200) throw new Error(`revert PUT: ${revert.status} ${JSON.stringify(revert.body)}`);
+    if (revert.status !== 200)
+      throw new Error(`revert PUT: ${revert.status} ${JSON.stringify(revert.body)}`);
     original = undefined;
     took = await waitForGuest(gw.url, (n) => !n.has(PRIVATE_TOOL), "admin-api toolset revert");
-    ok(`reverted (meta.version ${revert.body.version}); ${PRIVATE_TOOL} hidden again after ${took.toFixed(2)}s`);
+    ok(
+      `reverted (meta.version ${revert.body.version}); ${PRIVATE_TOOL} hidden again after ${took.toFixed(2)}s`,
+    );
 
     const history = await call("GET", `/api/history?collection=toolsets&id=${TOOLSET}&limit=2`);
     const entries = history.body.items as { actorName?: string; version: number }[];
     if (entries.length !== 2 || entries.some((e) => e.actorName !== "admin1")) {
       throw new Error(`history should hold the two admin1 writes: ${JSON.stringify(entries)}`);
     }
-    ok(`policy_history has both writes by admin1 (versions ${entries.map((e) => e.version).join(", ")})`);
+    ok(
+      `policy_history has both writes by admin1 (versions ${entries.map((e) => e.version).join(", ")})`,
+    );
   } finally {
     if (original) await call("PUT", `/api/toolsets/${TOOLSET}`, original).catch(() => {});
     await app.close();

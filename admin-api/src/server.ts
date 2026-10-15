@@ -17,8 +17,13 @@ async function main(): Promise<void> {
     verifier: createVerifier(config),
     gateway: createGatewayClient(config.gatewayUrl, config.gatewayToken, config.gatewayTimeoutMs),
   });
-  await ensureIndexes(mongo.db).catch((err: unknown) => app.log.warn({ err }, "could not ensure history indexes"));
-  if (!config.gatewayToken) app.log.warn("ADMIN_GATEWAY_INTERNAL_TOKEN not set: /api/catalog, /api/preview, health and reload answer 503");
+  await ensureIndexes(mongo.db).catch((err: unknown) =>
+    app.log.warn({ err }, "could not ensure history indexes"),
+  );
+  if (!config.gatewayToken)
+    app.log.warn(
+      "ADMIN_GATEWAY_INTERNAL_TOKEN not set: /api/catalog, /api/preview, health and reload answer 503",
+    );
 
   let closing = false;
   const shutdown = async (signal: string) => {
@@ -34,7 +39,13 @@ async function main(): Promise<void> {
 
   await app.listen({ host: config.host, port: config.port });
   app.log.info(
-    { issuer: config.oidcIssuer, audience: config.jwtAudience, role: config.requiredRole, gateway: config.gatewayUrl, db: config.mongoDb },
+    {
+      issuer: config.oidcIssuer,
+      audience: config.jwtAudience,
+      role: config.requiredRole,
+      gateway: config.gatewayUrl,
+      db: config.mongoDb,
+    },
     "admin-api ready",
   );
 }

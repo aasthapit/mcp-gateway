@@ -51,7 +51,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(helmet, {
     // JSON only: nothing may be framed, scripted or embedded. same-site lets the UI on
     // another localhost port read responses (CORS still decides who may).
-    contentSecurityPolicy: { useDefaults: false, directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] } },
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] },
+    },
     crossOriginResourcePolicy: { policy: "same-site" },
   });
   await app.register(cors, {
@@ -90,7 +93,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         err.code === "invalid_request"
           ? `Bearer realm="mcp-admin"`
           : `Bearer realm="mcp-admin", error="${err.code === "insufficient_role" ? "insufficient_scope" : err.code}"`;
-      return reply.code(err.status).header("www-authenticate", challenge).send({ error: err.message, code: err.code });
+      return reply
+        .code(err.status)
+        .header("www-authenticate", challenge)
+        .send({ error: err.message, code: err.code });
     }
     if (err instanceof HttpError) {
       if (err.status >= 500) request.log.warn({ err: err.body }, "upstream dependency failed");
@@ -104,7 +110,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     request.log.error({ err }, "unhandled error");
     return reply.code(500).send({ error: "internal error", request_id: request.id });
   });
-  app.setNotFoundHandler((request, reply) => reply.code(404).send({ error: `no route ${request.method} ${request.url}` }));
+  app.setNotFoundHandler((request, reply) =>
+    reply.code(404).send({ error: `no route ${request.method} ${request.url}` }),
+  );
 
   app.get("/healthz", async () => ({ status: "ok" }));
   app.get("/readyz", async (_request, reply) => {
@@ -112,7 +120,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       await deps.mongo.db.command({ ping: 1 }, { timeoutMS: 2_000 });
       return { status: "ready", checks: { mongo: "ok" } };
     } catch (err) {
-      return reply.code(503).send({ status: "not ready", checks: { mongo: (err as Error).message } });
+      return reply
+        .code(503)
+        .send({ status: "not ready", checks: { mongo: (err as Error).message } });
     }
   });
   app.get("/metrics", async (_request, reply) => {

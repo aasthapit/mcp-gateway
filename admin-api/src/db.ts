@@ -59,7 +59,10 @@ export const TXN_OPTIONS = {
   readPreference: "primary" as const,
 };
 
-export async function connectMongo(uri: string, dbName: string): Promise<{ client: MongoClient; db: Db }> {
+export async function connectMongo(
+  uri: string,
+  dbName: string,
+): Promise<{ client: MongoClient; db: Db }> {
   const client = new MongoClient(uri, {
     serverSelectionTimeoutMS: 5_000,
     writeConcern: { w: "majority" },
@@ -97,14 +100,21 @@ function canonical(value: unknown): string {
 }
 
 export async function currentVersion(db: Db, session?: ClientSession): Promise<number> {
-  const meta = await db.collection<{ _id: string; version?: number }>("meta").findOne({ _id: META_ID }, { session });
+  const meta = await db
+    .collection<{ _id: string; version?: number }>("meta")
+    .findOne({ _id: META_ID }, { session });
   return Number(meta?.version ?? 0);
 }
 
 /** The single write path: see the module comment. Retries transient transaction errors. */
-export async function policyWrite(client: MongoClient, db: Db, req: WriteRequest): Promise<WriteResult> {
+export async function policyWrite(
+  client: MongoClient,
+  db: Db,
+  req: WriteRequest,
+): Promise<WriteResult> {
   const { collection, id, actor, doc } = req;
-  if (doc && doc._id !== id) throw new HttpError(400, { error: "body _id does not match the URL id" });
+  if (doc && doc._id !== id)
+    throw new HttpError(400, { error: "body _id does not match the URL id" });
   return client.withSession((session) =>
     session.withTransaction(async (): Promise<WriteResult> => {
       const at = new Date();
@@ -114,7 +124,13 @@ export async function policyWrite(client: MongoClient, db: Db, req: WriteRequest
       if (req.precheck) await req.precheck(session, db);
 
       if (doc && sameContent(before, doc)) {
-        return { op: "noop", version: await currentVersion(db, session), at, before, after: before };
+        return {
+          op: "noop",
+          version: await currentVersion(db, session),
+          at,
+          before,
+          after: before,
+        };
       }
 
       let after: PolicyDoc | null = null;

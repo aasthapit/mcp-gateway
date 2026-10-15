@@ -12,10 +12,12 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(here, "../..");
 
-export const KEYCLOAK = process.env.ADMIN_IT_KEYCLOAK_URL ?? `http://localhost:${process.env.KEYCLOAK_PORT ?? "8180"}`;
+export const KEYCLOAK =
+  process.env.ADMIN_IT_KEYCLOAK_URL ?? `http://localhost:${process.env.KEYCLOAK_PORT ?? "8180"}`;
 export const ISSUER = `${KEYCLOAK}/realms/mcp`;
 export const MONGO_URI =
-  process.env.ADMIN_MONGO_URI ?? "mongodb://root:devpass@127.0.0.1:27017/?replicaSet=rs0&directConnection=true";
+  process.env.ADMIN_MONGO_URI ??
+  "mongodb://root:devpass@127.0.0.1:27017/?replicaSet=rs0&directConnection=true";
 export const PRIVATE_TOOL = "sample-private_secret_lookup";
 /** Dev-only tools the gateway adds in GATEWAY_ENV=dev; not part of the policy. */
 const DEBUG_TOOLS = new Set(["gateway_whoami"]);
@@ -32,9 +34,17 @@ export async function reachable(url: string, timeoutMs = 1_500): Promise<boolean
 export async function password(username: string, clientId = "mcp-admin-ui"): Promise<string> {
   const res = await fetch(`${ISSUER}/protocol/openid-connect/token`, {
     method: "POST",
-    body: new URLSearchParams({ client_id: clientId, grant_type: "password", username, password: username }),
+    body: new URLSearchParams({
+      client_id: clientId,
+      grant_type: "password",
+      username,
+      password: username,
+    }),
   });
-  if (!res.ok) throw new Error(`token for ${username} via ${clientId}: HTTP ${res.status} ${await res.text()}`);
+  if (!res.ok)
+    throw new Error(
+      `token for ${username} via ${clientId}: HTTP ${res.status} ${await res.text()}`,
+    );
   return ((await res.json()) as { access_token: string }).access_token;
 }
 
@@ -87,7 +97,10 @@ export async function waitForGuest(
     const names = await guestTools(gatewayUrl);
     const took = (performance.now() - start) / 1000;
     if (predicate(names)) return took;
-    if (took > budgetSec) throw new Error(`${what} not reflected within ${budgetSec}s: ${[...names].sort().join(", ")}`);
+    if (took > budgetSec)
+      throw new Error(
+        `${what} not reflected within ${budgetSec}s: ${[...names].sort().join(", ")}`,
+      );
     await new Promise((r) => setTimeout(r, 100));
   }
 }
@@ -97,7 +110,9 @@ async function freePort(): Promise<number> {
     const srv = net.createServer();
     srv.listen(0, "127.0.0.1", () => {
       const addr = srv.address();
-      srv.close(() => (typeof addr === "object" && addr ? resolve(addr.port) : reject(new Error("no port"))));
+      srv.close(() =>
+        typeof addr === "object" && addr ? resolve(addr.port) : reject(new Error("no port")),
+      );
     });
   });
 }
@@ -112,7 +127,9 @@ export interface RunningGateway {
  * A gateway to test against: GATEWAY_URL + GATEWAY_INTERNAL_TOKEN when set, otherwise a
  * fresh `uv run mcp-gateway` from ../gateway on a free port (Mongo policy, local stack).
  */
-export async function startGateway(log: (line: string) => void = () => {}): Promise<RunningGateway> {
+export async function startGateway(
+  log: (line: string) => void = () => {},
+): Promise<RunningGateway> {
   const external = process.env.GATEWAY_URL;
   if (external) {
     const token = process.env.GATEWAY_INTERNAL_TOKEN;

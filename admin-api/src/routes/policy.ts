@@ -28,7 +28,8 @@ function collectionParam(value: string): Collection {
 }
 
 function idParam(value: string): string {
-  if (!ID.test(value)) throw new HttpError(400, { error: `invalid id ${JSON.stringify(value)} (want ${ID.source})` });
+  if (!ID.test(value))
+    throw new HttpError(400, { error: `invalid id ${JSON.stringify(value)} (want ${ID.source})` });
   return value;
 }
 
@@ -38,12 +39,18 @@ export function normaliseBody(body: unknown, id: string): PolicyDoc {
     throw new HttpError(400, { error: "body must be a JSON object" });
   }
   const { _id = id, ...rest } = body as Document;
-  if (_id !== id) throw new HttpError(400, { error: `body _id ${JSON.stringify(_id)} does not match URL id ${id}` });
+  if (_id !== id)
+    throw new HttpError(400, {
+      error: `body _id ${JSON.stringify(_id)} does not match URL id ${id}`,
+    });
   for (const f of SERVER_FIELDS) delete rest[f];
   return { _id: id, ...rest };
 }
 
-export function registerPolicyRoutes(app: FastifyInstance, deps: AppDeps & { metrics: Metrics }): void {
+export function registerPolicyRoutes(
+  app: FastifyInstance,
+  deps: AppDeps & { metrics: Metrics },
+): void {
   const { db, client } = deps.mongo;
   const { validators, metrics } = deps;
 
@@ -52,15 +59,23 @@ export function registerPolicyRoutes(app: FastifyInstance, deps: AppDeps & { met
     return meta ?? { _id: META_ID, version: 0 };
   });
 
-  app.get<{ Querystring: { collection?: string; id?: string; limit?: string } }>("/api/history", async (request) => {
-    const { collection, id, limit } = request.query;
-    const filter: Document = {};
-    if (collection) filter.collection = collectionParam(collection);
-    if (id) filter.id = idParam(id);
-    const n = Math.min(Math.max(Number.parseInt(limit ?? "50", 10) || 50, 1), HISTORY_MAX);
-    const items = await db.collection(HISTORY).find(filter).sort({ at: -1, _id: -1 }).limit(n).toArray();
-    return { items };
-  });
+  app.get<{ Querystring: { collection?: string; id?: string; limit?: string } }>(
+    "/api/history",
+    async (request) => {
+      const { collection, id, limit } = request.query;
+      const filter: Document = {};
+      if (collection) filter.collection = collectionParam(collection);
+      if (id) filter.id = idParam(id);
+      const n = Math.min(Math.max(Number.parseInt(limit ?? "50", 10) || 50, 1), HISTORY_MAX);
+      const items = await db
+        .collection(HISTORY)
+        .find(filter)
+        .sort({ at: -1, _id: -1 })
+        .limit(n)
+        .toArray();
+      return { items };
+    },
+  );
 
   app.get<{ Params: Pick<Params, "collection"> }>("/api/:collection", async (request) => {
     const collection = collectionParam(request.params.collection);
@@ -105,7 +120,9 @@ export function registerPolicyRoutes(app: FastifyInstance, deps: AppDeps & { met
     );
     const warnings =
       collection === "grants"
-        ? (await missingToolsets(db, doc)).map((t) => `toolset ${t} does not exist (the grant has no effect for it)`)
+        ? (await missingToolsets(db, doc)).map(
+            (t) => `toolset ${t} does not exist (the grant has no effect for it)`,
+          )
         : [];
     return { op: result.op, version: result.version, document: result.after, warnings };
   });
@@ -122,7 +139,10 @@ export function registerPolicyRoutes(app: FastifyInstance, deps: AppDeps & { met
     });
     metrics.writes.inc({ collection, op: result.op });
     metrics.policyVersion.set(result.version);
-    request.log.info({ audit: { collection, id, op: "delete", version: result.version, actor: actor.sub } }, "policy write");
+    request.log.info(
+      { audit: { collection, id, op: "delete", version: result.version, actor: actor.sub } },
+      "policy write",
+    );
     return { op: result.op, version: result.version, document: result.before };
   });
 }

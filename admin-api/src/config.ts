@@ -43,7 +43,8 @@ function csv(value: string | undefined, fallback: string[]): string[] {
 function int(name: string, value: string | undefined, fallback: number): number {
   if (value === undefined || value === "") return fallback;
   const n = Number(value);
-  if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a non-negative integer, got ${value}`);
+  if (!Number.isInteger(n) || n < 0)
+    throw new Error(`${name} must be a non-negative integer, got ${value}`);
   return n;
 }
 
@@ -52,7 +53,10 @@ function bool(value: string | undefined, fallback: boolean): boolean {
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Partial<Config> = {}): Config {
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  overrides: Partial<Config> = {},
+): Config {
   const mode = (env.ADMIN_ENV ?? "dev") === "prod" ? "prod" : "dev";
   const cfg: Config = {
     env: mode,
@@ -62,7 +66,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     trustProxy: bool(env.ADMIN_TRUST_PROXY, mode === "prod"),
     bodyLimitBytes: int("ADMIN_BODY_LIMIT_BYTES", env.ADMIN_BODY_LIMIT_BYTES, 1024 * 1024),
     // 127.0.0.1, not localhost: the podman port forward is IPv4-only on macOS.
-    mongoUri: env.ADMIN_MONGO_URI ?? "mongodb://root:devpass@127.0.0.1:27017/?replicaSet=rs0&directConnection=true",
+    mongoUri:
+      env.ADMIN_MONGO_URI ??
+      "mongodb://root:devpass@127.0.0.1:27017/?replicaSet=rs0&directConnection=true",
     mongoDb: env.ADMIN_MONGO_DB ?? "mcp_gateway",
     oidcIssuer: (env.ADMIN_OIDC_ISSUER ?? "http://localhost:8180/realms/mcp").replace(/\/+$/, ""),
     jwksUrl: env.ADMIN_JWKS_URL || undefined,
@@ -80,7 +86,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     ...overrides,
   };
   if (cfg.env === "prod") {
-    if (!cfg.oidcIssuer.startsWith("https://")) throw new Error("ADMIN_OIDC_ISSUER must be https in prod");
+    if (!cfg.oidcIssuer.startsWith("https://"))
+      throw new Error("ADMIN_OIDC_ISSUER must be https in prod");
     if (!cfg.gatewayToken) throw new Error("ADMIN_GATEWAY_INTERNAL_TOKEN is required in prod");
     if (!env.ADMIN_MONGO_URI) throw new Error("ADMIN_MONGO_URI is required in prod");
   }

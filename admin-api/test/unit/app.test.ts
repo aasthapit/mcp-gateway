@@ -13,21 +13,35 @@ const calls: { path: string; query?: Record<string, string> }[] = [];
 const gateway: GatewayClient = {
   get: async (path, query) => {
     calls.push({ path, query });
-    return { status: 200, body: { tools: ["sample-public_echo"], grants: ["anon-default"], policy_version: 7 } };
+    return {
+      status: 200,
+      body: { tools: ["sample-public_echo"], grants: ["anon-default"], policy_version: 7 },
+    };
   },
   post: async (path) => ({ status: 200, body: { reloaded: path } }),
 };
 const admin: Principal = { sub: "u-1", name: "admin1", roles: ["mcp-admin"], claims: {} };
 const verifier = async (token: string) => {
   if (token === "admin.token.x") return admin;
-  if (token === "dev.token.x") throw new AuthError(403, "insufficient_role", "role mcp-admin required");
+  if (token === "dev.token.x")
+    throw new AuthError(403, "insufficient_role", "role mcp-admin required");
   throw new AuthError(401, "invalid_token", "bad token");
 };
-const mongo = { client: {} as MongoClient, db: { command: async () => ({ ok: 1 }) } as unknown as Db };
+const mongo = {
+  client: {} as MongoClient,
+  db: { command: async () => ({ ok: 1 }) } as unknown as Db,
+};
 let app: FastifyInstance;
 
 beforeAll(async () => {
-  app = await buildApp({ config, mongo, verifier, gateway, validators: buildValidators(config.schemasDir), logger: false });
+  app = await buildApp({
+    config,
+    mongo,
+    verifier,
+    gateway,
+    validators: buildValidators(config.schemasDir),
+    logger: false,
+  });
 });
 afterAll(() => app.close());
 
@@ -48,7 +62,9 @@ describe("auth hook", () => {
 
   it("leaves health and metrics open", async () => {
     expect((await app.inject({ method: "GET", url: "/healthz" })).statusCode).toBe(200);
-    expect((await app.inject({ method: "GET", url: "/readyz" })).json()).toMatchObject({ status: "ready" });
+    expect((await app.inject({ method: "GET", url: "/readyz" })).json()).toMatchObject({
+      status: "ready",
+    });
     const m = await app.inject({ method: "GET", url: "/metrics" });
     expect(m.body).toContain("admin_api_requests_total");
     expect(m.body).toContain('admin_api_auth_failures_total{reason="insufficient_role"} 1');
@@ -64,15 +80,23 @@ describe("request handling", () => {
       payload: { enabled: true, subject: { kind: "claim", path: "roles" }, toolsets: ["a"] },
     });
     expect(r.statusCode).toBe(400);
-    expect(r.json().details).toContainEqual({ path: "/subject", message: "must have required property 'op'" });
+    expect(r.json().details).toContainEqual({
+      path: "/subject",
+      message: "must have required property 'op'",
+    });
   });
 
   it("rejects unknown collections, bad ids, reserved upstream ids and mismatched _id", async () => {
-    const put = (url: string, payload: object) => app.inject({ method: "PUT", url, headers: auth(), payload });
-    expect((await app.inject({ method: "GET", url: "/api/users/x", headers: auth() })).statusCode).toBe(404);
+    const put = (url: string, payload: object) =>
+      app.inject({ method: "PUT", url, headers: auth(), payload });
+    expect(
+      (await app.inject({ method: "GET", url: "/api/users/x", headers: auth() })).statusCode,
+    ).toBe(404);
     expect((await put("/api/toolsets/Bad_Id", { enabled: true, allow: [] })).statusCode).toBe(400);
     expect((await put("/api/upstreams/health", {})).statusCode).toBe(400);
-    expect((await put("/api/toolsets/a", { _id: "b", enabled: true, allow: [] })).statusCode).toBe(400);
+    expect((await put("/api/toolsets/a", { _id: "b", enabled: true, allow: [] })).statusCode).toBe(
+      400,
+    );
   });
 
   it("enforces the body limit", async () => {
@@ -86,7 +110,11 @@ describe("request handling", () => {
   });
 
   it("echoes a sane X-Request-Id and replaces a hostile one", async () => {
-    let r = await app.inject({ method: "GET", url: "/healthz", headers: { "x-request-id": "abc-123" } });
+    let r = await app.inject({
+      method: "GET",
+      url: "/healthz",
+      headers: { "x-request-id": "abc-123" },
+    });
     expect(r.headers["x-request-id"]).toBe("abc-123");
     r = await app.inject({ method: "GET", url: "/healthz", headers: { "x-request-id": "a b\nc" } });
     expect(r.headers["x-request-id"]).toMatch(/^[0-9a-f-]{36}$/);
@@ -114,10 +142,14 @@ describe("request handling", () => {
 describe("gateway proxies", () => {
   it("preview: anonymous, claims (base64url) and an unverified token", async () => {
     calls.length = 0;
-    const post = (payload: object) => app.inject({ method: "POST", url: "/api/preview", headers: auth(), payload });
+    const post = (payload: object) =>
+      app.inject({ method: "POST", url: "/api/preview", headers: auth(), payload });
     let r = await post({ kind: "anonymous" });
     expect(r.json()).toMatchObject({ input: { mode: "anonymous" }, tools: ["sample-public_echo"] });
-    expect(calls.at(-1)).toEqual({ path: "/internal/effective-tools", query: { kind: "anonymous" } });
+    expect(calls.at(-1)).toEqual({
+      path: "/internal/effective-tools",
+      query: { kind: "anonymous" },
+    });
 
     const claims = { sub: "x", realm_access: { roles: ["mcp-developer"] } };
     r = await post({ claims });
@@ -136,9 +168,14 @@ describe("gateway proxies", () => {
   });
 
   it("catalog, health and reload are relayed", async () => {
-    expect((await app.inject({ method: "GET", url: "/api/catalog", headers: auth() })).statusCode).toBe(200);
+    expect(
+      (await app.inject({ method: "GET", url: "/api/catalog", headers: auth() })).statusCode,
+    ).toBe(200);
     expect(calls.at(-1)?.path).toBe("/internal/catalog");
-    expect((await app.inject({ method: "GET", url: "/api/upstreams/health", headers: auth() })).statusCode).toBe(200);
+    expect(
+      (await app.inject({ method: "GET", url: "/api/upstreams/health", headers: auth() }))
+        .statusCode,
+    ).toBe(200);
     expect(calls.at(-1)?.path).toBe("/internal/upstreams/health");
     const r = await app.inject({ method: "POST", url: "/api/upstreams/reload", headers: auth() });
     expect(r.json()).toEqual({ reloaded: "/internal/upstreams/reload" });

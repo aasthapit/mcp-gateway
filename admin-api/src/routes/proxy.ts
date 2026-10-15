@@ -53,7 +53,11 @@ export function registerProxyRoutes(app: FastifyInstance, deps: AppDeps): void {
   async function relay(route: string, call: () => Promise<{ status: number; body: unknown }>) {
     try {
       const { status, body } = await call();
-      if (status >= 400) throw new HttpError(status >= 500 ? 502 : status, { error: "gateway error", gateway: body });
+      if (status >= 400)
+        throw new HttpError(status >= 500 ? 502 : status, {
+          error: "gateway error",
+          gateway: body,
+        });
       return body;
     } catch (err) {
       deps.metrics?.gatewayErrors.inc({ route });
@@ -62,37 +66,45 @@ export function registerProxyRoutes(app: FastifyInstance, deps: AppDeps): void {
   }
 
   app.get("/api/catalog", async () => relay("catalog", () => gateway.get("/internal/catalog")));
-  app.get("/api/upstreams/health", async () => relay("health", () => gateway.get("/internal/upstreams/health")));
+  app.get("/api/upstreams/health", async () =>
+    relay("health", () => gateway.get("/internal/upstreams/health")),
+  );
   app.post("/api/upstreams/reload", async (request) => {
     const body = await relay("reload", () => gateway.post("/internal/upstreams/reload"));
-    request.log.info({ audit: { op: "upstreams_reload", actor: request.principal?.sub } }, "upstream reload");
+    request.log.info(
+      { audit: { op: "upstreams_reload", actor: request.principal?.sub } },
+      "upstream reload",
+    );
     return body;
   });
 
-  app.post<{ Body: PreviewBody }>("/api/preview", { schema: { body: previewSchema } }, async (request) => {
-    const body = request.body;
-    let query: Record<string, string>;
-    let input: { mode: "anonymous" | "claims" | "token"; verified: boolean; note?: string };
-    let claims: Record<string, unknown> | undefined;
-    if ("kind" in body) {
-      query = { kind: "anonymous" };
-      input = { mode: "anonymous", verified: false };
-    } else {
-      claims = "claims" in body ? body.claims : unverifiedClaims(body.token);
-      query = { claims: base64url(claims) };
-      input =
-        "token" in body
-          ? {
-              mode: "token",
-              verified: false,
-              note: "Token decoded WITHOUT signature, issuer, audience or expiry checks; preview only.",
-            }
-          : { mode: "claims", verified: false };
-    }
-    const result = (await relay("effective-tools", () => gateway.get("/internal/effective-tools", query))) as Record<
-      string,
-      unknown
-    >;
-    return { input, claims, ...result };
-  });
+  app.post<{ Body: PreviewBody }>(
+    "/api/preview",
+    { schema: { body: previewSchema } },
+    async (request) => {
+      const body = request.body;
+      let query: Record<string, string>;
+      let input: { mode: "anonymous" | "claims" | "token"; verified: boolean; note?: string };
+      let claims: Record<string, unknown> | undefined;
+      if ("kind" in body) {
+        query = { kind: "anonymous" };
+        input = { mode: "anonymous", verified: false };
+      } else {
+        claims = "claims" in body ? body.claims : unverifiedClaims(body.token);
+        query = { claims: base64url(claims) };
+        input =
+          "token" in body
+            ? {
+                mode: "token",
+                verified: false,
+                note: "Token decoded WITHOUT signature, issuer, audience or expiry checks; preview only.",
+              }
+            : { mode: "claims", verified: false };
+      }
+      const result = (await relay("effective-tools", () =>
+        gateway.get("/internal/effective-tools", query),
+      )) as Record<string, unknown>;
+      return { input, claims, ...result };
+    },
+  );
 }
