@@ -76,6 +76,37 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "other-api",
+      "name": "Other API (wrong audience)",
+      "description": "Confidential client whose tokens carry aud=other-api and NOT mcp-gateway; the gateway must answer 401 (WP2 integration test). Not imported into an already-initialised Keycloak: `make clean up` re-imports the realm.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "other-api-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "redirectUris": [],
+      "protocolMappers": [
+        {
+          "name": "other-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "other-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
     }
   ],
   "users": [

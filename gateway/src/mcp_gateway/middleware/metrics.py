@@ -45,6 +45,14 @@ POLICY_DENIALS = Counter(
     "tools/call attempts hidden by policy (answered as unknown tool).",
     ["tool", "principal_kind"],
 )
+AUTH_RESULTS = Counter(
+    "gateway_auth_results_total",
+    "Outcome of bearer authentication per HTTP request on the MCP endpoint "
+    "(anonymous|valid|invalid|disabled_anonymous).",
+    ["result"],
+)
+for _result in ("anonymous", "valid", "invalid", "disabled_anonymous"):
+    AUTH_RESULTS.labels(_result)
 POLICY_VERSION = Gauge("gateway_policy_version", "Version of the in-memory policy snapshot.")
 POLICY_AGE = Gauge(
     "gateway_policy_age_seconds", "Seconds since the in-memory policy snapshot was loaded."
