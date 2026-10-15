@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "$id": "https://mcp-gateway/schemas/upstreams.schema.json",
+  "title": "upstream",
+  "description": "A proxied upstream MCP server. `_id` is also the tool namespace prefix: tools appear as `<_id>_<tool>`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_id", "displayName", "enabled", "transport", "auth", "sessionMode"],
+  "properties": {
+    "_id": {
+      "type": "string",
+      "description": "Upstream id and tool namespace prefix (lowercase, digits, hyphens).",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "enabled": { "type": "boolean" },
+    "transport": {
+      "type": "string",
+      "enum": ["http", "sse", "stdio"],
+      "description": "stdio is for local development only; the gateway rejects it when GATEWAY_ENV=prod."
+    },
+    "url": {
+      "type": "string",
+      "description": "Streamable HTTP or SSE endpoint, e.g. http://mcp-github.mcp-upstreams.svc:8080/mcp",
+      "pattern": "^https?://"
+    },
+    "command": {
+      "type": "string",
+      "description": "stdio only: executable to spawn.",
+      "minLength": 1
+    },
+    "args": {
+      "type": "array",
+      "description": "stdio only: arguments for `command`.",
+      "items": { "type": "string" }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["none", "static_bearer", "static_header", "client_credentials"]
+        },
+        "secretRef": {
+          "type": "string",
+          "description": "Name of the mounted secret file (/etc/gateway/upstream-secrets/<secretRef>). Secrets are never stored in Mongo.",
+          "pattern": "^[A-Za-z0-9._-]{1,253}$"
+        },
+        "headerName": {
+          "type": "string",
+          "description": "static_header only: HTTP header that carries the secret.",
+          "pattern": "^[A-Za-z0-9-]{1,100}$"
+        }
+      }
+    },
+    "sessionMode": {
+      "type": "string",
+      "enum": ["shared", "per_request"],
+      "description": "shared = one connected client per gateway process (stateless upstreams); per_request = fresh upstream session per call."
+    },
+    "timeoutsMs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "connect": { "type": "integer", "minimum": 1, "maximum": 600000 },
+        "call": { "type": "integer", "minimum": 1, "maximum": 3600000 }
+      }
+    },
+    "cacheTtlSec": { "type": "integer", "minimum": 0, "maximum": 86400 },
+    "tags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+    },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "updatedBy": { "type": "string", "maxLength": 200 }
+  },
+  "anyOf": [
+    {
+      "properties": { "transport": { "enum": ["http", "sse"] } },
+      "required": ["url"]
+    },
+    {
+      "properties": { "transport": { "enum": ["stdio"] } },
+      "required": ["command"]
+    }
+  ]
+}

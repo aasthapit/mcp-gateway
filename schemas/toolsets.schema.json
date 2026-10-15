@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "$id": "https://mcp-gateway/schemas/toolsets.schema.json",
+  "title": "toolset",
+  "description": "A named allow-list of namespaced tool names (fnmatch globs allowed). Explicit deny wins over allow within the union of a principal's toolsets.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_id", "enabled", "allow"],
+  "properties": {
+    "_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "description": { "type": "string", "maxLength": 1000 },
+    "enabled": { "type": "boolean" },
+    "allow": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Namespaced tool names such as `github_search` or globs such as `weather_*`.",
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9_*?\\[\\]!.-]{1,200}$" }
+    },
+    "deny": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9_*?\\[\\]!.-]{1,200}$" }
+    },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "updatedBy": { "type": "string", "maxLength": 200 }
+  }
+}

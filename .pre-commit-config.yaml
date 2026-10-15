@@ -1,0 +1,37 @@
+# Run `pre-commit install` once; CI runs `pre-commit run --all-files`.
+# docs/ is excluded: the plan and research notes are prose, and ruff/prettier rewrap their code fences.
+exclude: ^docs/
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: check-json
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.0
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v4.0.0-alpha.8
+    hooks:
+      - id: prettier
+        types_or: [json, yaml, markdown, javascript, ts, tsx, css]
+        exclude: ^(local/mongo-init/validators\.js|local/keycloak/realm\.json)$
+
+  - repo: local
+    hooks:
+      - id: build-mongo-validators
+        name: Mongo validators are up to date
+        entry: python3 schemas/build-mongo-validators.py --check
+        language: system
+        files: ^(schemas/.*\.schema\.json|schemas/build-mongo-validators\.py)$
+        pass_filenames: false

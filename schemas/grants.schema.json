@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "$id": "https://mcp-gateway/schemas/grants.schema.json",
+  "title": "grant",
+  "description": "Who gets which toolsets. Effective tools = union of allow over all matching grants' toolsets minus union of their deny lists. `anonymous` grants match everyone (the guest floor); `authenticated` matches any valid token; `claim` matches a dotted JSON path in the token; `client_id` matches the token's client.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_id", "enabled", "subject", "toolsets"],
+  "properties": {
+    "_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "description": { "type": "string", "maxLength": 1000 },
+    "enabled": { "type": "boolean" },
+    "priority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000,
+      "description": "Display/audit ordering only; does not change set semantics."
+    },
+    "subject": {
+      "type": "object",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "enum": ["anonymous"] } }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "enum": ["authenticated"] } }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["kind", "path", "op"],
+          "properties": {
+            "kind": { "enum": ["claim"] },
+            "path": {
+              "type": "string",
+              "description": "Dotted JSON path into the verified claims, e.g. realm_access.roles, roles, scp, groups.",
+              "pattern": "^[A-Za-z0-9_$:/.-]{1,200}$"
+            },
+            "op": { "type": "string", "enum": ["eq", "in", "contains", "exists"] },
+            "value": {
+              "description": "eq: scalar to compare; in: array of accepted scalars; contains: scalar that must be in the claim array; exists: omitted.",
+              "anyOf": [
+                { "type": "string" },
+                { "type": "number" },
+                { "type": "boolean" },
+                {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "enum": ["client_id"] },
+            "value": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        }
+      ]
+    },
+    "toolsets": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$" }
+    },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "updatedBy": { "type": "string", "maxLength": 200 }
+  }
+}

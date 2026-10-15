@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "$id": "https://mcp-gateway/schemas/meta.schema.json",
+  "title": "meta",
+  "description": "Singleton policy version document. Every admin write bumps `version` in the same transaction; gateways poll it every 30 s as a change-stream fallback.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_id", "version"],
+  "properties": {
+    "_id": { "enum": ["policy"] },
+    "version": { "type": "integer", "minimum": 0 },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "updatedBy": { "type": "string", "maxLength": 200 }
+  }
+}

@@ -1,0 +1,10 @@
+# Shared ruff configuration for every Python package in the repo.
+target-version = "py312"
+line-length = 100
+
+[lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]
+
+[format]
+quote-style = "double"

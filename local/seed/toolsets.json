@@ -1,0 +1,23 @@
+[
+  {
+    "_id": "public-basics",
+    "description": "Open to everyone (guest floor).",
+    "enabled": true,
+    "allow": ["sample-public_time_now", "sample-public_echo"],
+    "deny": []
+  },
+  {
+    "_id": "engineering",
+    "description": "Developers: everything from the private sample upstream.",
+    "enabled": true,
+    "allow": ["sample-private_*"],
+    "deny": []
+  },
+  {
+    "_id": "ci-tools",
+    "description": "Machine callers: public upstream only, no echo (demonstrates deny).",
+    "enabled": true,
+    "allow": ["sample-public_*"],
+    "deny": ["sample-public_echo"]
+  }
+]

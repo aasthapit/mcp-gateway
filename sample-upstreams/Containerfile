@@ -1,0 +1,19 @@
+# Sample upstream MCP servers (one image, two entrypoints: sample-public / sample-private).
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --no-dev
+
+COPY src ./src
+RUN uv sync --frozen --no-dev
+
+ENV PATH="/app/.venv/bin:$PATH"
+# OpenShift-style hygiene even though this image is local-only.
+RUN chgrp -R 0 /app && chmod -R g=u /app
+USER 1001
+
+EXPOSE 8081 8082
+CMD ["sample-public"]

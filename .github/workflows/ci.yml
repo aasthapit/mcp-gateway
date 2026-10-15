@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint (ruff, prettier, hooks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Install pre-commit
+        run: pip install pre-commit==4.7.0
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  schemas:
+    name: schemas (build validators, validate seed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install jsonschema
+        run: pip install jsonschema==4.26.0
+      - name: Generated validators are up to date and seed documents validate
+        run: python schemas/build-mongo-validators.py --check --validate-seed
+      - name: validators.js parses
+        run: node --check local/mongo-init/validators.js
+
+  compose:
+    name: compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate compose file
+        run: docker compose -f local/compose.yaml config -q

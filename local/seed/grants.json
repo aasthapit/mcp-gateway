@@ -1,0 +1,31 @@
+[
+  {
+    "_id": "anon-default",
+    "description": "Guest floor; matches every caller.",
+    "enabled": true,
+    "priority": 100,
+    "subject": { "kind": "anonymous" },
+    "toolsets": ["public-basics"]
+  },
+  {
+    "_id": "developers",
+    "description": "Keycloak realm role mcp-developer.",
+    "enabled": true,
+    "priority": 50,
+    "subject": {
+      "kind": "claim",
+      "path": "realm_access.roles",
+      "op": "contains",
+      "value": "mcp-developer"
+    },
+    "toolsets": ["public-basics", "engineering"]
+  },
+  {
+    "_id": "ci-bot",
+    "description": "Client-credentials client ci-runner.",
+    "enabled": true,
+    "priority": 60,
+    "subject": { "kind": "client_id", "value": "ci-runner" },
+    "toolsets": ["ci-tools"]
+  }
+]

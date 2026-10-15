@@ -1,0 +1,109 @@
+{
+  "realm": "mcp",
+  "displayName": "MCP Gateway (local dev)",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "accessTokenLifespan": 3600,
+  "roles": {
+    "realm": [
+      { "name": "mcp-developer", "description": "May use the engineering toolsets through the gateway" },
+      { "name": "mcp-admin", "description": "May edit policy through the admin API/UI" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "mcp-gateway",
+      "name": "MCP Gateway",
+      "description": "Public client used by MCP clients (and `make token`) to obtain tokens for the gateway. Also the audience value the gateway validates.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "redirectUris": ["http://localhost:*", "http://127.0.0.1:*"],
+      "webOrigins": ["+"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "protocolMappers": [
+        {
+          "name": "mcp-gateway-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "mcp-gateway",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "ci-runner",
+      "name": "CI runner (client credentials)",
+      "description": "Confidential client for machine callers; tokens carry azp=ci-runner and aud=mcp-gateway.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "ci-runner-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "redirectUris": [],
+      "protocolMappers": [
+        {
+          "name": "mcp-gateway-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "mcp-gateway",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "dev1",
+      "email": "dev1@example.test",
+      "firstName": "Dev",
+      "lastName": "One",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "dev1", "temporary": false }],
+      "realmRoles": ["mcp-developer"]
+    },
+    {
+      "username": "admin1",
+      "email": "admin1@example.test",
+      "firstName": "Admin",
+      "lastName": "One",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "admin1", "temporary": false }],
+      "realmRoles": ["mcp-admin", "mcp-developer"]
+    },
+    {
+      "username": "service-account-ci-runner",
+      "enabled": true,
+      "serviceAccountClientId": "ci-runner",
+      "realmRoles": []
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "_id": "sample-public",
+    "displayName": "Sample public upstream",
+    "enabled": true,
+    "transport": "http",
+    "url": "http://sample-public:8081/mcp",
+    "auth": { "type": "none" },
+    "sessionMode": "shared",
+    "timeoutsMs": { "connect": 2000, "call": 30000 },
+    "cacheTtlSec": 60,
+    "tags": ["sample", "public"]
+  },
+  {
+    "_id": "sample-private",
+    "displayName": "Sample private upstream",
+    "enabled": true,
+    "transport": "http",
+    "url": "http://sample-private:8082/mcp",
+    "auth": { "type": "none" },
+    "sessionMode": "shared",
+    "timeoutsMs": { "connect": 2000, "call": 30000 },
+    "cacheTtlSec": 60,
+    "tags": ["sample", "private"]
+  }
+]

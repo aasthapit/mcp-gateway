@@ -1,0 +1,234 @@
+# Local development stack. Works with both `podman compose` and `docker compose`.
+#
+#   make up        # build + start, then apply the Mongo replica set + validators
+#   make seed      # load local/seed/*.json
+#   make token     # dev1 access token from Keycloak
+#   make down
+#
+# Interpolation defaults mirror local/.env.example so a bare `podman compose up` also works.
+
+name: mcp-gateway
+
+services:
+  # ---------------------------------------------------------------------------
+  # MongoDB 8 as a single-node replica set (change streams need a replica set).
+  # --keyFile implies --auth. The keyfile is generated at container start: for a
+  # single member it never has to match anything, and generating it avoids bind-mount
+  # ownership problems on Podman/Docker for Mac.
+  # ---------------------------------------------------------------------------
+  mongo:
+    image: docker.io/library/mongo:8
+    container_name: mcp-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-devpass}
+    entrypoint:
+      - bash
+      - -ec
+      - |
+        head -c 756 /dev/urandom | base64 -w0 > /tmp/mongo-keyfile
+        chown mongodb:mongodb /tmp/mongo-keyfile
+        chmod 400 /tmp/mongo-keyfile
+        exec docker-entrypoint.sh "$@"
+      - --
+    command:
+      - mongod
+      - --replSet
+      - rs0
+      - --keyFile
+      - /tmp/mongo-keyfile
+      - --bind_ip_all
+      - --oplogMinRetentionHours
+      - "24"
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo-data:/data/db
+      - mongo-config:/data/configdb
+    healthcheck:
+      # ping needs no auth. Probe the container's network address, not 127.0.0.1: during the
+      # first start the entrypoint runs a temporary localhost-only mongod to create the root
+      # user, and that one must not count as healthy.
+      test:
+        - CMD-SHELL
+        - mongosh --quiet --host "$(hostname -i)" --eval "db.adminCommand('ping').ok === 1 || quit(1)"
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  # One-shot: rs.initiate (idempotent) + $jsonSchema validators. Also the image used by
+  # `make seed` / `make mongosh` (it has mongosh and the init + seed scripts mounted).
+  mongo-init:
+    image: docker.io/library/mongo:8
+    container_name: mcp-mongo-init
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-root}:${MONGO_ROOT_PASSWORD:-devpass}@mongo:27017/?directConnection=true
+      MONGO_DB: ${MONGO_DB:-mcp_gateway}
+    volumes:
+      - ./mongo-init:/mongo-init:ro
+      - ./seed:/seed:ro
+    # The image entrypoint execs any non-mongod command unchanged, so
+    # `compose run --rm mongo-init mongosh ...` works too (see Makefile).
+    command:
+      - bash
+      - -ec
+      - |
+        mongosh --quiet "$$MONGO_URI" /mongo-init/rs-init.js
+        mongosh --quiet "$$MONGO_URI" /mongo-init/validators.js
+
+  # ---------------------------------------------------------------------------
+  # Keycloak (dev mode). Realm `mcp` is imported on first start from ./keycloak/realm.json.
+  # Admin console: http://localhost:8180  (admin / admin)
+  # ---------------------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8
+    container_name: mcp-keycloak
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}
+      KC_HOSTNAME: ${KC_HOSTNAME:-http://localhost:8180}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_LOG_LEVEL: info
+    ports:
+      - "${KEYCLOAK_PORT:-8180}:8080"
+      - "9000:9000"
+    volumes:
+      - ./keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
+      - keycloak-data:/opt/keycloak/data/h2
+    healthcheck:
+      # The image has no curl; use bash's /dev/tcp against the management port.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"UP"' <&3
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Sample upstream MCP servers (FastMCP 4.1, stateless streamable HTTP at /mcp).
+  # ---------------------------------------------------------------------------
+  sample-public:
+    build:
+      context: ../sample-upstreams
+      dockerfile: Containerfile
+    image: localhost/mcp-sample-upstreams:dev
+    container_name: mcp-sample-public
+    restart: unless-stopped
+    command: ["sample-public"]
+    environment:
+      MCP_PORT: "8081"
+    ports:
+      - "${SAMPLE_PUBLIC_PORT:-8081}:8081"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,urllib.error\ntry:\n    urllib.request.urlopen('http://127.0.0.1:8081/mcp', timeout=3)\nexcept urllib.error.HTTPError:\n    pass",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  sample-private:
+    build:
+      context: ../sample-upstreams
+      dockerfile: Containerfile
+    image: localhost/mcp-sample-upstreams:dev
+    container_name: mcp-sample-private
+    restart: unless-stopped
+    command: ["sample-private"]
+    environment:
+      MCP_PORT: "8082"
+    ports:
+      - "${SAMPLE_PRIVATE_PORT:-8082}:8082"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,urllib.error\ntry:\n    urllib.request.urlopen('http://127.0.0.1:8082/mcp', timeout=3)\nexcept urllib.error.HTTPError:\n    pass",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # WP1: the gateway. Uncomment once gateway/Containerfile exists.
+  # ---------------------------------------------------------------------------
+  # gateway:
+  #   build:
+  #     context: ../gateway
+  #     dockerfile: Containerfile
+  #   container_name: mcp-gateway
+  #   depends_on:
+  #     mongo-init:
+  #       condition: service_completed_successfully
+  #     keycloak:
+  #       condition: service_healthy
+  #     sample-public:
+  #       condition: service_healthy
+  #     sample-private:
+  #       condition: service_healthy
+  #   environment:
+  #     GATEWAY_ENV: dev
+  #     GATEWAY_MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-root}:${MONGO_ROOT_PASSWORD:-devpass}@mongo:27017/?replicaSet=rs0&directConnection=true
+  #     GATEWAY_MONGO_DB: ${MONGO_DB:-mcp_gateway}
+  #     GATEWAY_OIDC_ISSUER: ${KC_HOSTNAME:-http://localhost:8180}/realms/mcp
+  #     GATEWAY_JWKS_URL: http://keycloak:8080/realms/mcp/protocol/openid-connect/certs
+  #     GATEWAY_AUDIENCE: mcp-gateway
+  #     GATEWAY_RESOURCE_URL: http://localhost:${GATEWAY_PORT:-8080}/mcp
+  #     GATEWAY_ALLOW_ANONYMOUS: "true"
+  #   ports:
+  #     - "${GATEWAY_PORT:-8080}:8080"
+  #     - "9090:9090"
+  #   volumes:
+  #     - ../gateway/src:/opt/app-root/src/src:ro   # hot reload in dev
+
+  # ---------------------------------------------------------------------------
+  # WP5: admin API + UI. Uncomment once admin-api/ and admin-ui/ have Containerfiles.
+  # ---------------------------------------------------------------------------
+  # admin-api:
+  #   build: ../admin-api
+  #   container_name: mcp-admin-api
+  #   depends_on:
+  #     mongo-init:
+  #       condition: service_completed_successfully
+  #   environment:
+  #     MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-root}:${MONGO_ROOT_PASSWORD:-devpass}@mongo:27017/?replicaSet=rs0&directConnection=true
+  #     MONGO_DB: ${MONGO_DB:-mcp_gateway}
+  #     OIDC_ISSUER: ${KC_HOSTNAME:-http://localhost:8180}/realms/mcp
+  #     JWKS_URL: http://keycloak:8080/realms/mcp/protocol/openid-connect/certs
+  #     GATEWAY_INTERNAL_URL: http://gateway:8080/internal
+  #   ports:
+  #     - "${ADMIN_API_PORT:-3001}:3001"
+  #
+  # admin-ui:
+  #   build: ../admin-ui
+  #   container_name: mcp-admin-ui
+  #   depends_on: [admin-api]
+  #   ports:
+  #     - "${ADMIN_UI_PORT:-3000}:3000"
+
+volumes:
+  mongo-data:
+  mongo-config:
+  keycloak-data:
