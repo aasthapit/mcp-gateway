@@ -62,5 +62,5 @@ for p in "$SAMPLE_PUBLIC_PORT" "$SAMPLE_PRIVATE_PORT"; do
   [ "$code" = "405" ] || [ "$code" = "406" ] || [ "$code" = "400" ] && pass "upstream on :$p answers /mcp (HTTP $code)" || fail "upstream on :$p (HTTP $code)"
 done
 
-echo "gateway"
-echo "  skip  WP1: run an MCP client as guest and as dev1 through the gateway and assert the tool lists differ"
+# The gateway checks (guest, garbage bearer, dev1 via GATEWAY_SMOKE_TOKEN) run from the Makefile:
+# gateway/src/mcp_gateway/smoke.py. Tool lists differ per caller once WP3 lands the Mongo policy.

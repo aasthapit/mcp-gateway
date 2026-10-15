@@ -69,7 +69,46 @@ def test_prod_ok_and_no_localhost_hosts() -> None:
         public_base_url="https://mcp.example.com/",
         allowed_hosts=["mcp.example.com"],
         static_upstreams=[],
+        oidc_issuer="https://idp.example.com/realms/mcp/",
     )
     assert s.is_prod
     assert s.public_base_url == "https://mcp.example.com"
     assert s.effective_allowed_hosts == ["mcp.example.com"]
+    assert s.oidc_issuer == "https://idp.example.com/realms/mcp"
+    assert s.resource_url == "https://mcp.example.com/mcp"
+    assert s.resource_metadata_url == "https://mcp.example.com/.well-known/oauth-protected-resource"
+
+
+def test_prod_requires_https_issuer_and_jwks() -> None:
+    with pytest.raises(ValueError, match="OIDC_ISSUER is required"):
+        Settings(
+            env="prod", public_base_url="https://m.example.com", static_upstreams=[], oidc_issuer=""
+        )
+    with pytest.raises(ValueError, match="OIDC_ISSUER must be https"):
+        Settings(
+            env="prod",
+            public_base_url="https://m.example.com",
+            static_upstreams=[],
+            oidc_issuer="http://idp.example.com",
+        )
+    with pytest.raises(ValueError, match="JWKS_URI must be https"):
+        Settings(
+            env="prod",
+            public_base_url="https://m.example.com",
+            static_upstreams=[],
+            oidc_issuer="https://idp.example.com",
+            jwks_uri="http://idp.internal/certs",
+        )
+
+
+def test_jwt_algorithm_allow_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert Settings(jwt_algorithms="RS256, PS256,RS256").jwt_algorithms == ["RS256", "PS256"]
+    assert Settings(jwt_algorithms='["ES256"]').jwt_algorithms == ["ES256"]
+    monkeypatch.setenv("GATEWAY_JWT_ALGORITHMS", "RS512")
+    monkeypatch.setenv("GATEWAY_SCOPES_SUPPORTED", "openid,mcp:tools")
+    s = Settings()
+    assert s.jwt_algorithms == ["RS512"]
+    assert s.scopes_supported == ["openid", "mcp:tools"]
+    for bad in ("none", "HS256", "RS256,none", "RS256,ES256", ""):
+        with pytest.raises(ValueError):
+            Settings(jwt_algorithms=bad)

@@ -72,10 +72,10 @@ decode: ## decode the claims of a token: make decode TOKEN=... (defaults to `mak
 	@tok="$(TOKEN)"; [ -n "$$tok" ] || tok=$$($(MAKE) -s token); \
 	$(PY) -c 'import sys,base64,json; p=sys.argv[1].split(".")[1]; print(json.dumps(json.loads(base64.urlsafe_b64decode(p+"="*(-len(p)%4))), indent=2))' "$$tok"
 
-smoke: env ## end-to-end checks: infra, then a guest MCP client through the gateway (GATEWAY_URL=... to test a running one)
+smoke: env ## end-to-end checks: infra, then guest + dev1 MCP clients through the gateway (GATEWAY_URL=... to test a running one)
 	COMPOSE="$(COMPOSE)" $(LOCAL)/smoke.sh
-	@echo "gateway (guest client)"
-	@cd gateway && uv run --frozen python -m mcp_gateway.smoke $(GATEWAY_URL)
+	@echo "gateway (guest, garbage bearer, dev1 client)"
+	@tok=$$($(MAKE) -s token KC_USER=dev1) && cd gateway && GATEWAY_SMOKE_TOKEN="$$tok" uv run --frozen python -m mcp_gateway.smoke $(GATEWAY_URL)
 
 lint: ## ruff + prettier + schema check via pre-commit
 	pre-commit run --all-files --show-diff-on-failure

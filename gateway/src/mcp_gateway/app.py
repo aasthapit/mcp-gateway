@@ -3,9 +3,9 @@
 Layout of the ASGI app::
 
     Starlette (outer)
-      /healthz, /readyz, /metrics, /.well-known/oauth-protected-resource   (plain routes)
+      /healthz, /readyz, /metrics, /.well-known/oauth-protected-resource[/mcp]  (plain routes)
       Mount("/")  ->  FastMCP http_app(path=/mcp, stateless_http=True)
-                        HostOriginGuard -> [WP2 auth ASGI middleware] -> MCP transport
+                        HostOriginGuard -> BearerAuthMiddleware (auth/asgi.py) -> MCP transport
                           FastMCP middleware: Policy -> Audit -> Metrics -> ErrorHandling
 
 The outer app's lifespan drives the FastMCP app's lifespan and flips readiness afterwards.
@@ -24,10 +24,14 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest, start_http_s
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 from starlette.routing import Mount, Route
 
 from mcp_gateway import __version__
+from mcp_gateway.auth.asgi import BearerAuthMiddleware
+from mcp_gateway.auth.jwt import JwtAuth
+from mcp_gateway.auth.metadata import metadata_routes
+from mcp_gateway.debug_tools import register_debug_tools
 from mcp_gateway.health import Readiness, healthz, make_readyz
 from mcp_gateway.middleware.audit import AuditMiddleware
 from mcp_gateway.middleware.metrics import (
@@ -60,6 +64,7 @@ class Gateway:
     registry: UpstreamRegistry
     readiness: Readiness
     policy_store: PolicyStore
+    jwt_auth: JwtAuth
     snapshot: PolicySnapshot = field(default_factory=AllowAllSnapshot)
     app: Starlette | None = None
 
@@ -74,15 +79,18 @@ def build_gateway(
     settings: Settings | None = None,
     *,
     policy_store: PolicyStore | None = None,
+    jwt_auth: JwtAuth | None = None,
     asgi_middleware: list[Middleware] | None = None,
 ) -> Gateway:
     """Build the gateway and its Starlette app without starting anything.
 
-    ``asgi_middleware`` is applied inside the FastMCP app (around ``/mcp`` only); WP2
-    passes its auth middleware here.
+    ``jwt_auth`` lets tests inject a verifier bound to an in-process JWKS endpoint.
+    ``asgi_middleware`` is applied inside the FastMCP app (around ``/mcp`` only), after
+    the bearer auth middleware.
     """
     settings = settings or load_settings()
     configure_logging(settings)
+    jwt_auth = jwt_auth or JwtAuth(settings)
 
     mcp = FastMCP(
         "gateway",
@@ -100,7 +108,9 @@ def build_gateway(
         registry=registry,
         readiness=Readiness(),
         policy_store=policy_store or StaticPolicyStore(),
+        jwt_auth=jwt_auth,
     )
+    gateway.readiness.register("oidc", jwt_auth.probe, critical=settings.is_prod)
 
     # Order matters: first added is outermost (FastMCP builds the chain in list order).
     mcp.add_middleware(PolicyMiddleware(snapshot_provider=lambda: gateway.snapshot))
@@ -109,19 +119,28 @@ def build_gateway(
     mcp.add_middleware(ErrorHandlingMiddleware(include_traceback=not settings.is_prod))
 
     registry.mount_static(settings)
+    if settings.env == "dev":
+        register_debug_tools(mcp)
 
+    auth_middleware = Middleware(
+        BearerAuthMiddleware,
+        auth=jwt_auth,
+        resource_metadata_url=settings.resource_metadata_url,
+        allow_anonymous=settings.allow_anonymous,
+    )
     mcp_app = mcp.http_app(
         path=settings.mcp_path,
         stateless_http=True,
         host_origin_protection=settings.host_origin_protection,
         allowed_hosts=settings.effective_allowed_hosts,
-        middleware=asgi_middleware,
+        middleware=[auth_middleware, *(asgi_middleware or [])],
     )
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[dict[str, Any]]:
         metrics_server = None
         async with mcp_app.lifespan(mcp_app):
+            await jwt_auth.startup()
             gateway.set_snapshot(await gateway.policy_store.load())
             for uid in registry.namespaces:
                 UPSTREAM_UP.labels(upstream=uid).set(1)
@@ -135,6 +154,8 @@ def build_gateway(
                 env=settings.env,
                 mcp_path=settings.mcp_path,
                 upstreams=list(registry.namespaces),
+                allow_anonymous=settings.allow_anonymous,
+                issuer=settings.oidc_issuer,
             )
             try:
                 yield {"gateway": gateway}
@@ -146,29 +167,12 @@ def build_gateway(
     async def metrics(request: Request) -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
-    async def protected_resource_metadata(request: Request) -> JSONResponse:
-        # RFC 9728 placeholder. WP2 fills authorization_servers/scopes from OIDC discovery
-        # and serves the same document from FastMCP's auth provider routes.
-        return JSONResponse(
-            {
-                "resource": f"{settings.public_base_url}{settings.mcp_path}",
-                "authorization_servers": [],
-                "bearer_methods_supported": ["header"],
-                "scopes_supported": [],
-            },
-            headers={"Cache-Control": "public, max-age=300"},
-        )
-
     app = Starlette(
         routes=[
             Route("/healthz", healthz, methods=["GET"]),
             Route("/readyz", make_readyz(gateway.readiness), methods=["GET"]),
             Route("/metrics", metrics, methods=["GET"]),
-            Route(
-                "/.well-known/oauth-protected-resource",
-                protected_resource_metadata,
-                methods=["GET"],
-            ),
+            *metadata_routes(settings),
             Mount("/", app=mcp_app),
         ],
         lifespan=lifespan,
