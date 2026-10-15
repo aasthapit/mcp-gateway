@@ -17,3 +17,4 @@ the local stack), the result, and what the gateway does about it.
 | [0008](0008-policy-reload.md)                        | Policy hot reload: change stream + version poll (WP3)    |
 | [0009](0009-upstream-timeouts.md)                    | Upstream timeouts, shared sessions, live mount/unmount   |
 | [0010](0010-openshift-packaging.md)                  | OpenShift packaging: Helm via Argo CD, Routes, Percona  |
+| [0012](0012-limits-and-telemetry.md)                 | Limits, OTLP tracing, graceful shutdown, alerts (WP7)    |

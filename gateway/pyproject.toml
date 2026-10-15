@@ -10,6 +10,9 @@ dependencies = [
     "prometheus-client>=0.22",
     "structlog>=25.1",
     "pymongo>=4.13",
+    "opentelemetry-sdk>=1.45",
+    "opentelemetry-exporter-otlp-proto-http>=1.45",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.45",
 ]
 
 [project.scripts]
@@ -35,7 +38,10 @@ packages = ["src/mcp_gateway"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-markers = ["integration: needs the local stack (make up)"]
+markers = [
+    "integration: needs the local stack (make up)",
+    "drill: failure drill against the local stack; skipped unless GATEWAY_DRILLS=1 (make drills)",
+]
 
 [tool.ruff]
 extend = "../ruff.toml"

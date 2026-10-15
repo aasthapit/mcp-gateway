@@ -35,10 +35,10 @@ certified and installed from OperatorHub ([ADR 0010](../../../docs/adr/0010-open
   a restart (PLAN §3.3). `sharding.enabled: false`.
 - `tls.mode: requireTLS` with operator-issued certificates (cert-manager if present).
 - `users`: SCRAM users managed by the operator (>= 1.16):
-  | user        | roles                       | used by                           |
-  | ----------- | --------------------------- | --------------------------------- |
-  | `gateway`   | `read` on `mcp_gateway`     | gateway pods (reads + change streams; `read` includes the `changeStream` action) |
-  | `admin-api` | `readWrite` on `mcp_gateway`| admin API (CRUD, version bump, history) |
+  | user        | roles                        | used by                                                                          |
+  | ----------- | ---------------------------- | -------------------------------------------------------------------------------- |
+  | `gateway`   | `read` on `mcp_gateway`      | gateway pods (reads + change streams; `read` includes the `changeStream` action) |
+  | `admin-api` | `readWrite` on `mcp_gateway` | admin API (CRUD, version bump, history)                                          |
 - `backup`: PBM 2.15, daily logical + weekly physical to S3-compatible object storage,
   PITR with 10-minute oplog slices, 14/8 copies kept.
 

@@ -109,6 +109,9 @@ class Settings(BaseSettings):
     jwks_refresh_floor_sec: int = Field(default=300, ge=0)
     """Minimum seconds between successful JWKS refreshes triggered by an unknown ``kid``."""
     oidc_discovery_timeout_sec: float = Field(default=5.0, gt=0)
+    jwks_fetch_timeout_sec: float = Field(default=3.0, gt=0, le=30)
+    """Deadline of one JWKS fetch. Requests carrying an unknown ``kid`` wait at most this
+    long while the IdP is unreachable; known keys keep verifying from the cache."""
     scopes_supported: Annotated[list[str], NoDecode] = Field(default_factory=list)
     """Advertised in RFC 9728 metadata (CSV or JSON list). Informational only."""
 
@@ -160,7 +163,65 @@ class Settings(BaseSettings):
 
     log_level: LogLevel = "INFO"
     log_json: bool = True
+
+    # -- OpenTelemetry (WP7; see telemetry.py and docs/adr/0012-limits-and-telemetry.md) --
     telemetry_mode: TelemetryMode = "off"
+    """``off``: no spans, no propagation. ``propagation_only``: carry incoming trace
+    context to upstreams without spans of our own. ``native``: FastMCP's spans exported
+    over OTLP to ``GATEWAY_OTLP_ENDPOINT``."""
+    otlp_endpoint: str | None = None
+    """Collector base URL (``http://otel-collector:4318`` for http/protobuf,
+    ``http://otel-collector:4317`` for grpc). Unset: ``OTEL_EXPORTER_OTLP_ENDPOINT``, then
+    ``http://localhost:4318`` / ``:4317``."""
+    otlp_protocol: Literal["http/protobuf", "grpc"] = "http/protobuf"
+    otlp_timeout_sec: float = Field(default=5.0, gt=0, le=60)
+    otel_service_name: str = "mcp-gateway"
+    """``service.name`` resource attribute. ``service.version`` is the gateway version;
+    ``k8s.pod.name``/``k8s.namespace.name``/``k8s.node.name`` come from ``POD_NAME``,
+    ``POD_NAMESPACE``, ``NODE_NAME`` (Downward API) and ``OTEL_RESOURCE_ATTRIBUTES``."""
+
+    # -- limits (WP7; all per pod: N replicas admit N times the configured rate) ----------
+    rate_limit_enabled: bool = True
+    rate_limit_anonymous_rps: float = Field(default=20.0, gt=0)
+    """Sustained MCP requests per second per anonymous client IP."""
+    rate_limit_anonymous_burst: int = Field(default=60, ge=1)
+    rate_limit_user_rps: float = Field(default=50.0, gt=0)
+    """Sustained MCP requests per second per authenticated principal (``sub``, else
+    ``client_id``)."""
+    rate_limit_user_burst: int = Field(default=150, ge=1)
+    rate_limit_max_keys: int = Field(default=10_000, ge=100)
+    """Token buckets kept in memory (least recently used are dropped first)."""
+    trusted_proxies: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    """IPs/CIDRs (CSV or JSON list) whose ``X-Forwarded-For`` is believed: the client IP
+    is the right-most XFF entry that is not itself a trusted proxy. Empty: the TCP peer
+    address is the client (XFF ignored). OpenShift: the router pods' network."""
+    response_max_bytes: int = Field(default=1_000_000, ge=0)
+    """Serialized ``tools/call`` results above this are truncated to text (0 = off)."""
+    max_request_body_bytes: int = Field(default=1_048_576, ge=0)
+    """HTTP request bodies above this get 413 before reaching MCP (0 = off)."""
+
+    # -- shutdown (WP7) -------------------------------------------------------------------
+    shutdown_grace_sec: float = Field(default=45.0, ge=0, le=3600)
+    """After SIGTERM: listen streams are closed at once, in-flight requests get this long
+    to finish before they are cancelled. Keep it below ``terminationGracePeriodSeconds``
+    minus the preStop sleep."""
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _check_proxies(cls, v: list[str]) -> list[str]:
+        import ipaddress
+
+        for entry in v:
+            ipaddress.ip_network(entry, strict=False)  # raises ValueError on garbage
+        return v
+
+    @field_validator("otlp_endpoint", mode="before")
+    @classmethod
+    def _empty_endpoint_is_none(cls, v: object) -> object:
+        if isinstance(v, str):
+            v = v.strip().rstrip("/")
+            return v or None
+        return v
 
     @field_validator("static_upstreams", mode="before")
     @classmethod
@@ -170,7 +231,7 @@ class Settings(BaseSettings):
             return json.loads(v) if v else []
         return v
 
-    @field_validator("jwt_algorithms", "scopes_supported", mode="before")
+    @field_validator("jwt_algorithms", "scopes_supported", "trusted_proxies", mode="before")
     @classmethod
     def _parse_str_list(cls, v: object) -> object:
         if isinstance(v, str):

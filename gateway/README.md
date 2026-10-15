@@ -15,6 +15,16 @@ and are hot-reloaded (change stream + poll, see [Policy](#policy-allow-lists-fro
 the guest floor is `public-basics` in the seed and `mcp-developer` users also get
 `engineering`. Resources and prompts are hidden. `/internal/*` serves the admin API (WP5).
 
+**WP7 hardening** ([ADR 0012](../docs/adr/0012-limits-and-telemetry.md)) adds:
+
+- optional OTLP tracing ([Observability](#observability));
+- per-principal rate limits, a response size limit and a body size limit, all per pod
+  ([Limits](#limits-per-pod));
+- a graceful SIGTERM drain ([Shutdown](#graceful-shutdown));
+- alerts, documented in the [runbook](../docs/runbook.md);
+- a load test, with results in [perf.md](../docs/perf.md);
+- failure drills (`make drills`).
+
 ## Run locally
 
 ```bash
@@ -41,13 +51,13 @@ Python client (a string `auth=` becomes `Authorization: Bearer ...`):
 ```python
 from fastmcp import Client
 
-async with Client("http://localhost:8080/mcp") as c:                  # guest
+async with Client("http://localhost:8080/mcp") as c:  # guest
     print([t.name for t in await c.list_tools()])  # sample-public_time_now, sample-public_echo
     print((await c.call_tool("sample-public_echo", {"text": "hi"})).data)
 
-async with Client("http://localhost:8080/mcp", auth=token) as c:      # dev1
+async with Client("http://localhost:8080/mcp", auth=token) as c:  # dev1
     print([t.name for t in await c.list_tools()])  # + the `engineering` toolset
-    print((await c.call_tool("gateway_whoami", {})).data)             # dev only: the resolved principal
+    print((await c.call_tool("gateway_whoami", {})).data)  # dev only: the resolved principal
 ```
 
 ## Authentication
@@ -117,56 +127,69 @@ behaviour (no Mongo needed; used by the unit tests) and reloads leave those moun
 
 ## Configuration (`GATEWAY_*` environment variables)
 
-| Variable                                 | Default                                     | Notes                                                                                                                                                                                         |
-| ---------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GATEWAY_ENV`                            | `dev`                                       | `prod` enables guards: no stdio upstreams, https base URL, host/origin guard and JSON logs forced                                                                                             |
-| `GATEWAY_HOST` / `GATEWAY_PORT`          | `0.0.0.0` / `8080`                          | MCP + health + metrics listener                                                                                                                                                               |
-| `GATEWAY_METRICS_PORT`                   | `9090`                                      | Separate Prometheus listener; `0` disables it (`/metrics` stays on the main port)                                                                                                             |
-| `GATEWAY_PUBLIC_BASE_URL`                | `http://localhost:8080`                     | External origin, used in RFC 9728 metadata                                                                                                                                                    |
-| `GATEWAY_MCP_PATH`                       | `/mcp`                                      |                                                                                                                                                                                               |
-| `GATEWAY_ALLOWED_HOSTS`                  | `[]`                                        | JSON list of extra `Host` values accepted by the DNS-rebinding guard (localhost always ok in dev)                                                                                             |
-| `GATEWAY_HOST_ORIGIN_PROTECTION`         | `true`                                      |                                                                                                                                                                                               |
-| `GATEWAY_ALLOW_ANONYMOUS`                | `true`                                      | `false` = strict mode: requests without a bearer token get 401                                                                                                                                |
-| `GATEWAY_OIDC_ISSUER`                    | `http://localhost:8180/realms/mcp`          | Expected `iss`; JWKS URI discovered from `<issuer>/.well-known/openid-configuration` at startup (fatal in prod, retried on demand in dev). Empty = reject every token. https required in prod |
-| `GATEWAY_JWKS_URI`                       | unset                                       | Explicit JWKS endpoint, skips discovery (containers: issuer is the host-visible URL, JWKS via the service name)                                                                               |
-| `GATEWAY_JWT_AUDIENCE`                   | `mcp-gateway`                               | Required `aud` member                                                                                                                                                                         |
-| `GATEWAY_JWT_ALGORITHMS`                 | `RS256`                                     | CSV or JSON allow-list of asymmetric `alg` values from one key family; `none`/`HS*` refused                                                                                                   |
-| `GATEWAY_JWT_CLOCK_SKEW_SEC`             | `30`                                        | Leeway on `exp`/`nbf`                                                                                                                                                                         |
-| `GATEWAY_JWKS_REFRESH_FLOOR_SEC`         | `300`                                       | Minimum gap between unknown-`kid` JWKS refreshes                                                                                                                                              |
-| `GATEWAY_OIDC_DISCOVERY_TIMEOUT_SEC`     | `5`                                         |                                                                                                                                                                                               |
-| `GATEWAY_SCOPES_SUPPORTED`               | `[]`                                        | Advertised in the RFC 9728 document (CSV or JSON)                                                                                                                                             |
-| `GATEWAY_MONGO_URI` / `GATEWAY_MONGO_DB` | local replica set / `mcp_gateway`           | Policy store and `upstreams` collection (readConcern majority); needs a replica set (change streams) |
-| `GATEWAY_MONGO_SERVER_SELECTION_TIMEOUT_MS` | `5000`                                      | How long the upstream loader waits for Mongo                                                      |
-| `GATEWAY_POLICY_SOURCE`                  | `mongo`                                     | `static` = allow-all, dev/test only (refused in prod)                                             |
-| `GATEWAY_POLICY_POLL_SEC`                | `30`                                        | Fallback poll of `meta.version` (covers missed events / tiers without change streams)             |
-| `GATEWAY_POLICY_DEBOUNCE_MS`             | `250`                                       | Change-stream events within this window cause one reload                                          |
-| `GATEWAY_UPSTREAMS_SOURCE`                  | `mongo`                                     | `static` = mount `GATEWAY_STATIC_UPSTREAMS` instead (WP1 behaviour); with `mongo` the policy snapshot drives the mounts                               |
-| `GATEWAY_STATIC_UPSTREAMS`                  | public → `:8081/mcp`, private → `:8082/mcp` | JSON list of `{id, url, transport?, cache_ttl_sec?, protocol_mode?, session_mode?}`               |
-| `GATEWAY_UPSTREAM_SECRETS_DIR`              | `/etc/gateway/upstream-secrets`             | `auth.secretRef` files; env fallback `GATEWAY_UPSTREAM_SECRET_<REF>`                              |
-| `GATEWAY_UPSTREAM_PROBE_SEC`                | `30`                                        | Health probe interval (`tools/list` per upstream on a fresh short-lived client)                   |
-| `GATEWAY_UPSTREAM_PROBE_TIMEOUT_SEC`        | `5`                                         | Deadline of one probe                                                                             |
-| `GATEWAY_READY_REQUIRES_UPSTREAM`           | `true`                                      | `/readyz` 503 until at least one upstream is mounted (a dead-but-mounted one still counts)        |
-| `GATEWAY_INTERNAL_TOKEN`                    | unset                                       | Enables `/internal/*`; callers send it as `X-Internal-Token`. Unset = 404                         |
-| `GATEWAY_TOOLS_LIST_TTL_SEC`             | `30`                                        | `ttlMs` cache hint on modern-era list results (ADR 0002)                                                                                                                                      |
-| `GATEWAY_LOG_LEVEL` / `GATEWAY_LOG_JSON` | `INFO` / `true`                             | JSON lines to stdout; `GATEWAY_LOG_JSON=false` for a console renderer                                                                                                                         |
-| `GATEWAY_TELEMETRY_MODE`                 | `off`                                       | Sets `FASTMCP_TELEMETRY_MODE` (`native` for OTel spans, WP7)                                                                                                                                  |
+| Variable                                      | Default                                     | Notes                                                                                                                                                                                         |
+| --------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GATEWAY_ENV`                                 | `dev`                                       | `prod` enables guards: no stdio upstreams, https base URL, host/origin guard and JSON logs forced                                                                                             |
+| `GATEWAY_HOST` / `GATEWAY_PORT`               | `0.0.0.0` / `8080`                          | MCP + health + metrics listener                                                                                                                                                               |
+| `GATEWAY_METRICS_PORT`                        | `9090`                                      | Separate Prometheus listener; `0` disables it (`/metrics` stays on the main port)                                                                                                             |
+| `GATEWAY_PUBLIC_BASE_URL`                     | `http://localhost:8080`                     | External origin, used in RFC 9728 metadata                                                                                                                                                    |
+| `GATEWAY_MCP_PATH`                            | `/mcp`                                      |                                                                                                                                                                                               |
+| `GATEWAY_ALLOWED_HOSTS`                       | `[]`                                        | JSON list of extra `Host` values accepted by the DNS-rebinding guard (localhost always ok in dev)                                                                                             |
+| `GATEWAY_HOST_ORIGIN_PROTECTION`              | `true`                                      |                                                                                                                                                                                               |
+| `GATEWAY_ALLOW_ANONYMOUS`                     | `true`                                      | `false` = strict mode: requests without a bearer token get 401                                                                                                                                |
+| `GATEWAY_OIDC_ISSUER`                         | `http://localhost:8180/realms/mcp`          | Expected `iss`; JWKS URI discovered from `<issuer>/.well-known/openid-configuration` at startup (fatal in prod, retried on demand in dev). Empty = reject every token. https required in prod |
+| `GATEWAY_JWKS_URI`                            | unset                                       | Explicit JWKS endpoint, skips discovery (containers: issuer is the host-visible URL, JWKS via the service name)                                                                               |
+| `GATEWAY_JWT_AUDIENCE`                        | `mcp-gateway`                               | Required `aud` member                                                                                                                                                                         |
+| `GATEWAY_JWT_ALGORITHMS`                      | `RS256`                                     | CSV or JSON allow-list of asymmetric `alg` values from one key family; `none`/`HS*` refused                                                                                                   |
+| `GATEWAY_JWT_CLOCK_SKEW_SEC`                  | `30`                                        | Leeway on `exp`/`nbf`                                                                                                                                                                         |
+| `GATEWAY_JWKS_REFRESH_FLOOR_SEC`              | `300`                                       | Minimum gap between unknown-`kid` JWKS refreshes                                                                                                                                              |
+| `GATEWAY_OIDC_DISCOVERY_TIMEOUT_SEC`          | `5`                                         |                                                                                                                                                                                               |
+| `GATEWAY_SCOPES_SUPPORTED`                    | `[]`                                        | Advertised in the RFC 9728 document (CSV or JSON)                                                                                                                                             |
+| `GATEWAY_MONGO_URI` / `GATEWAY_MONGO_DB`      | local replica set / `mcp_gateway`           | Policy store and `upstreams` collection (readConcern majority); needs a replica set (change streams)                                                                                          |
+| `GATEWAY_MONGO_SERVER_SELECTION_TIMEOUT_MS`   | `5000`                                      | How long the upstream loader waits for Mongo                                                                                                                                                  |
+| `GATEWAY_POLICY_SOURCE`                       | `mongo`                                     | `static` = allow-all, dev/test only (refused in prod)                                                                                                                                         |
+| `GATEWAY_POLICY_POLL_SEC`                     | `30`                                        | Fallback poll of `meta.version` (covers missed events / tiers without change streams)                                                                                                         |
+| `GATEWAY_POLICY_DEBOUNCE_MS`                  | `250`                                       | Change-stream events within this window cause one reload                                                                                                                                      |
+| `GATEWAY_UPSTREAMS_SOURCE`                    | `mongo`                                     | `static` = mount `GATEWAY_STATIC_UPSTREAMS` instead (WP1 behaviour); with `mongo` the policy snapshot drives the mounts                                                                       |
+| `GATEWAY_STATIC_UPSTREAMS`                    | public → `:8081/mcp`, private → `:8082/mcp` | JSON list of `{id, url, transport?, cache_ttl_sec?, protocol_mode?, session_mode?}`                                                                                                           |
+| `GATEWAY_UPSTREAM_SECRETS_DIR`                | `/etc/gateway/upstream-secrets`             | `auth.secretRef` files; env fallback `GATEWAY_UPSTREAM_SECRET_<REF>`                                                                                                                          |
+| `GATEWAY_UPSTREAM_PROBE_SEC`                  | `30`                                        | Health probe interval (`tools/list` per upstream on a fresh short-lived client)                                                                                                               |
+| `GATEWAY_UPSTREAM_PROBE_TIMEOUT_SEC`          | `5`                                         | Deadline of one probe                                                                                                                                                                         |
+| `GATEWAY_READY_REQUIRES_UPSTREAM`             | `true`                                      | `/readyz` 503 until at least one upstream is mounted (a dead-but-mounted one still counts)                                                                                                    |
+| `GATEWAY_INTERNAL_TOKEN`                      | unset                                       | Enables `/internal/*`; callers send it as `X-Internal-Token`. Unset = 404                                                                                                                     |
+| `GATEWAY_TOOLS_LIST_TTL_SEC`                  | `30`                                        | `ttlMs` cache hint on modern-era list results (ADR 0002)                                                                                                                                      |
+| `GATEWAY_LOG_LEVEL` / `GATEWAY_LOG_JSON`      | `INFO` / `true`                             | JSON lines to stdout; `GATEWAY_LOG_JSON=false` for a console renderer                                                                                                                         |
+| `GATEWAY_TELEMETRY_MODE`                      | `off`                                       | `off` / `propagation_only` / `native` (OTLP export); sets FastMCP's own mode, see [Observability](#observability)                                                                             |
+| `GATEWAY_OTLP_ENDPOINT`                       | unset                                       | Collector base URL; unset = `OTEL_EXPORTER_OTLP_ENDPOINT`, then `http://localhost:4318` (`:4317` for grpc)                                                                                    |
+| `GATEWAY_OTLP_PROTOCOL`                       | `http/protobuf`                             | or `grpc`                                                                                                                                                                                     |
+| `GATEWAY_OTLP_TIMEOUT_SEC`                    | `5`                                         | Export deadline                                                                                                                                                                               |
+| `GATEWAY_OTEL_SERVICE_NAME`                   | `mcp-gateway`                               | `service.name`; `k8s.*` from `POD_NAME`/`POD_NAMESPACE`/`NODE_NAME`, plus `OTEL_RESOURCE_ATTRIBUTES`                                                                                          |
+| `GATEWAY_RATE_LIMIT_ENABLED`                  | `true`                                      | Per-pod token buckets per principal                                                                                                                                                           |
+| `GATEWAY_RATE_LIMIT_ANONYMOUS_RPS` / `_BURST` | `20` / `60`                                 | Per anonymous client IP                                                                                                                                                                       |
+| `GATEWAY_RATE_LIMIT_USER_RPS` / `_BURST`      | `50` / `150`                                | Per user (`sub`, else `client_id`)                                                                                                                                                            |
+| `GATEWAY_RATE_LIMIT_MAX_KEYS`                 | `10000`                                     | LRU bound of the bucket table                                                                                                                                                                 |
+| `GATEWAY_TRUSTED_PROXIES`                     | `[]`                                        | IPs/CIDRs (CSV or JSON) whose `X-Forwarded-For` is believed; empty = TCP peer is the client                                                                                                   |
+| `GATEWAY_RESPONSE_MAX_BYTES`                  | `1000000`                                   | Oversized `tools/call` results are truncated to text; `0` = off (also keeps `outputSchema` in listings)                                                                                       |
+| `GATEWAY_MAX_REQUEST_BODY_BYTES`              | `1048576`                                   | Larger bodies get 413; `0` = off                                                                                                                                                              |
+| `GATEWAY_JWKS_FETCH_TIMEOUT_SEC`              | `3`                                         | Deadline of one JWKS fetch (unknown `kid` during an IdP outage waits at most this long)                                                                                                       |
+| `GATEWAY_SHUTDOWN_GRACE_SEC`                  | `45`                                        | After SIGTERM, in-flight requests get this long; keep below `terminationGracePeriodSeconds` − preStop                                                                                         |
 
 `protocol_mode` per upstream: `auto` (probe `server/discover`, fall back to the handshake),
 `2026-07-28` (pin the modern era, cheapest for FastMCP 4.x upstreams), `legacy`. See ADR 0001.
 
 ## Endpoints
 
-| Path                                        | What                                                                                                                                                                                               |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /mcp`                                 | MCP streamable HTTP, both protocol eras, stateless (no GET stream, no sessions)                                                                                                                    |
-| `GET /healthz`                              | process up                                                                                                                                                                                         |
+| Path                                        | What                                                                                                                                                                                                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /mcp`                                 | MCP streamable HTTP, both protocol eras, stateless (no GET stream, no sessions)                                                                                                                                                                   |
+| `GET /healthz`                              | process up                                                                                                                                                                                                                                        |
 | `GET /readyz`                               | 503 until the lifespan finished, a policy snapshot is loaded and all critical readiness probes pass (`health.py`); JSON reports `checks.policy` (version, `policy_age_seconds`, change stream state) and the `oidc` probe (critical in prod only) |
-| `GET /metrics`                              | Prometheus text; also on the metrics port                                                                                                                                                          |
-| `GET /.well-known/oauth-protected-resource` | RFC 9728 metadata: `resource`, `authorization_servers=[issuer]`, `bearer_methods_supported=["header"]`, `scopes_supported`; also served at `.../oauth-protected-resource/mcp` (path-suffixed form) |
-| `GET /internal/catalog`                     | every tool across mounted upstreams (`namespaced_name, upstream, name, description, input_schema`)   |
-| `GET /internal/upstreams/health`            | last probe result per upstream (`status up/down/degraded/unknown`, `reason`, `latency_ms`)           |
-| `POST /internal/upstreams/reload`           | force a policy reload and reconcile the upstreams (the watcher does this on every change)                                          |
-| `GET /internal/effective-tools`             | tools a principal sees: `?kind=anonymous` or `?claims=<base64url JSON>`; also returns the matching grants |
+| `GET /metrics`                              | Prometheus text; also on the metrics port                                                                                                                                                                                                         |
+| `GET /.well-known/oauth-protected-resource` | RFC 9728 metadata: `resource`, `authorization_servers=[issuer]`, `bearer_methods_supported=["header"]`, `scopes_supported`; also served at `.../oauth-protected-resource/mcp` (path-suffixed form)                                                |
+| `GET /internal/catalog`                     | every tool across mounted upstreams (`namespaced_name, upstream, name, description, input_schema`)                                                                                                                                                |
+| `GET /internal/upstreams/health`            | last probe result per upstream (`status up/down/degraded/unknown`, `reason`, `latency_ms`)                                                                                                                                                        |
+| `POST /internal/upstreams/reload`           | force a policy reload and reconcile the upstreams (the watcher does this on every change)                                                                                                                                                         |
+| `GET /internal/effective-tools`             | tools a principal sees: `?kind=anonymous` or `?claims=<base64url JSON>`; also returns the matching grants                                                                                                                                         |
 
 `/internal/*` requires `X-Internal-Token` equal to `GATEWAY_INTERNAL_TOKEN` (constant-time
 compare, 403 otherwise, 404 when unset) and is served by the outer Starlette app, never via
@@ -228,6 +251,63 @@ Measured on the local stack: an edit shows in the next `tools/list` after about 
 resume without the gateway noticing; a full Mongo outage leaves the stale snapshot in
 service with reconnect attempts backing off to 10 s.
 
+## Observability
+
+Metrics are on `/metrics` and on the separate `:9090` listener. On top of the WP1–WP4 set,
+WP7 adds:
+
+| Metric                                       | Meaning                                                                                                                                                     |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gateway_http_responses_total{route,code}`   | HTTP responses by route group and status class (input of the 5xx alert)                                                                                     |
+| `gateway_rate_limited_total{principal_kind}` | Requests rejected by the rate limiter                                                                                                                       |
+| `gateway_response_truncated_total{upstream}` | Results truncated by the response limit                                                                                                                     |
+| `gateway_request_body_rejected_total`        | Requests answered with 413                                                                                                                                  |
+| `gateway_open_listen_streams`                | Open `subscriptions/listen` streams on this pod                                                                                                             |
+| `gateway_policy_staleness_seconds`           | Time since the store last confirmed the snapshot; the alerting signal (unlike `gateway_policy_age_seconds`, it does not grow while nobody edits the policy) |
+
+**Tracing.** `GATEWAY_TELEMETRY_MODE=native` installs the OpenTelemetry SDK with an OTLP
+exporter. FastMCP's native spans are exported: one SERVER span per MCP request, `delegate`
+spans into the mounted proxies, and client spans to upstreams, with context carried in
+`_meta`. The gateway adds these attributes to the SERVER span: `gateway.principal.kind`,
+`gateway.principal.client_id`, `gateway.policy.version` and `gateway.upstream`. An incoming
+`traceparent` header is continued. Every log line written inside a span carries `trace_id`
+and `span_id`. `propagation_only` passes trace context through without creating spans;
+`off` (the default) does neither.
+
+```bash
+make traces     # from the repo root: starts the otel-collector (debug exporter), runs one
+                # traced guest tools/call through an in-process gateway, prints that trace's spans
+GATEWAY_TELEMETRY_MODE=native GATEWAY_OTLP_ENDPOINT=http://localhost:4318 uv run mcp-gateway
+make logs SVC=otel-collector
+```
+
+## Limits (per pod)
+
+Every limit is enforced per pod. N replicas admit N times the configured rate; global
+limits need a shared store and are v2 (ADR 0012).
+
+- **Rate limit:** FastMCP's token-bucket `RateLimitingMiddleware`, keyed `user:<sub>` (or
+  `client_id`) for users and `ip:<client ip>` for anonymous callers. Every MCP request
+  takes a token. A rejected request gets the JSON-RPC error
+  `-32000 Rate limit exceeded; retry later`.
+- **Client IP:** the TCP peer, unless the peer is listed in `GATEWAY_TRUSTED_PROXIES`.
+  Then it is the right-most `X-Forwarded-For` entry that is not itself a trusted proxy. The
+  chart trusts the OpenShift router network, `10.128.0.0/14`.
+- **Response size:** results over `GATEWAY_RESPONSE_MAX_BYTES` become one truncated text
+  block. While this limit is on, listed tools lose `outputSchema`, because a truncated
+  result cannot match it.
+- **Body size:** requests over `GATEWAY_MAX_REQUEST_BODY_BYTES` get 413 before they reach
+  MCP.
+
+## Graceful shutdown
+
+On SIGTERM, `main.GatewayServer` drains the gateway first: `/readyz` turns 503 and every
+listen stream is closed with its final `SubscriptionsListenResult`, so clients re-listen
+on another pod. uvicorn then stops accepting connections and gives in-flight requests up to
+`GATEWAY_SHUTDOWN_GRACE_SEC`. sse-starlette's automatic SSE drain is disabled because it
+cut in-flight SSE-answered tool calls. `tests/unit/test_shutdown.py` proves the sequence.
+`make drills` runs a rolling restart behind a round-robin balancer and checks for zero 5xx.
+
 ## Layout
 
 ```
@@ -237,7 +317,9 @@ src/mcp_gateway/
   settings.py             pydantic-settings, prod guards
   health.py               readiness registry, /healthz /readyz handlers
   internal_routes.py      /internal/* (catalog, upstream health/reload, effective-tools), token guard
-  telemetry.py            structlog JSON logging
+  telemetry.py            structlog JSON logging (+ trace ids), OTLP tracing setup (native mode)
+  http_guards.py          outermost ASGI guard: client IP (trusted proxies), 413 body limit, HTTP status metric, traceparent
+  tracecheck.py           `make traces`: one traced tools/call, then its spans from the collector log
   smoke.py                smoke check: guest, garbage bearer, live allow-list edit, catalog, dev1 (make smoke)
   debug_tools.py          gateway_whoami, registered only when GATEWAY_ENV=dev
   auth/principal.py       Principal (frozen dataclass, cache_key), current_principal()
@@ -258,16 +340,21 @@ src/mcp_gateway/
   upstreams/source.py     where the desired list comes from: Mongo `upstreams` or static settings
   middleware/metrics.py   Prometheus counters and histograms
   middleware/audit.py     one structured line per tools/call
+  middleware/limits.py    PrincipalRateLimitingMiddleware, CountingResponseLimitingMiddleware (FastMCP's, + keys/metrics)
+  middleware/tracing.py   SpanAttributesMiddleware: principal kind, policy version, upstream on the SERVER span
 tests/unit                settings, principal, health, policy models/matcher (hypothesis)/watcher/store/middleware, metrics/audit, app assembly,
                           auth (in-process IdP), upstream models/secrets/proxy/registry (fake FastMCP + ADR 0005 guard), internal routes
 tests/integration         in-process gateway + FastMCP client against the local stack and Keycloak (skips if down):
                           static policy (test_gateway_live), auth flows (test_auth_live), Mongo policy with live
                           edits, listen stream, poll fallback and replica-set step-down (test_policy_live);
                           test_upstreams_live.py needs Mongo and `podman` (stops/starts mcp-sample-private)
+tests/drills              failure drills, skipped unless GATEWAY_DRILLS=1 (make drills): Mongo restart, upstream
+                          down, IdP down, rolling restart
 ```
 
-FastMCP middleware order (outermost first): `PolicyMiddleware`, `AuditMiddleware`,
-`MetricsMiddleware`, `ErrorHandlingMiddleware`. The principal is read from
+FastMCP middleware order (outermost first): `SpanAttributesMiddleware`,
+`PrincipalRateLimitingMiddleware`, `PolicyMiddleware`, `AuditMiddleware`,
+`MetricsMiddleware`, `CountingResponseLimitingMiddleware`, `ErrorHandlingMiddleware`. The principal is read from
 `principal_var` or `request.state.principal`, both set by `BearerAuthMiddleware`. The SDK
 `ListenHandler` is registered on the low-level server in `app.py` (ADR 0003) so
 `subscriptions/listen` works and `tools.listChanged` is advertised.
@@ -277,6 +364,7 @@ FastMCP middleware order (outermost first): `PolicyMiddleware`, `AuditMiddleware
 ```bash
 uv run pytest            # unit + integration (integration skips without `make up` + `make seed`)
 uv run pytest -m "not integration"
+GATEWAY_DRILLS=1 uv run pytest -m drill tests/drills -v   # = make drills (needs make up + make seed + podman)
 uv run ruff check . && uv run ruff format --check .
 ```
 

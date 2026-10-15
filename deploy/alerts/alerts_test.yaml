@@ -1,0 +1,141 @@
+# promtool unit tests for the gateway PrometheusRule (deploy/helm/mcp-gateway/templates/
+# prometheusrule.yaml). deploy-check.sh renders the prod rule groups to
+# deploy/.render/alerts/mcp-gateway.rules.yaml and runs `promtool test rules` on this file.
+rule_files:
+  - ../.render/alerts/mcp-gateway.rules.yaml
+
+evaluation_interval: 30s
+
+tests:
+  # Policy staleness: fires 1m after crossing 300 s on one pod; the healthy pod stays quiet.
+  - interval: 30s
+    input_series:
+      - series: 'gateway_policy_staleness_seconds{job="mcp-gateway",namespace="mcp-gateway",pod="a"}'
+        values: "0+30x20" # grows 30 s per 30 s: Mongo unreachable
+      - series: 'gateway_policy_staleness_seconds{job="mcp-gateway",namespace="mcp-gateway",pod="b"}'
+        values: "10x20"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: McpGatewayPolicyStale
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: McpGatewayPolicyStale
+        exp_alerts:
+          - exp_labels: { severity: critical, pod: a }
+            exp_annotations:
+              summary: "Gateway pod a serves a policy not confirmed for more than 300 s"
+              description: "Allow-list changes (including revocations) are not reaching this pod; it keeps serving the last snapshot. Usually Mongo is unreachable from the pod."
+              runbook_url: "https://github.com/aasthapit/mcp-gateway/blob/main/docs/runbook.md#mcpgatewaypolicystale"
+
+  # Change stream down for > 2 m.
+  - interval: 30s
+    input_series:
+      - series: 'gateway_change_stream_up{job="mcp-gateway",namespace="mcp-gateway",pod="a"}'
+        values: "1 1 0 0 0 0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: McpGatewayChangeStreamDown
+        exp_alerts: []
+      - eval_time: 3m30s
+        alertname: McpGatewayChangeStreamDown
+        exp_alerts:
+          - exp_labels: { severity: warning, pod: a }
+            exp_annotations:
+              summary: "Policy change stream down on a"
+              description: "Policy edits now reach this pod only through the 30 s version poll."
+              runbook_url: "https://github.com/aasthapit/mcp-gateway/blob/main/docs/runbook.md#mcpgatewaychangestreamdown"
+
+  # Upstream down on every pod fires; down on one pod only does not.
+  - interval: 1m
+    input_series:
+      - series: 'gateway_upstream_up{job="mcp-gateway",namespace="mcp-gateway",pod="a",upstream="crm"}'
+        values: "0x10"
+      - series: 'gateway_upstream_up{job="mcp-gateway",namespace="mcp-gateway",pod="b",upstream="crm"}'
+        values: "0x10"
+      - series: 'gateway_upstream_up{job="mcp-gateway",namespace="mcp-gateway",pod="a",upstream="wiki"}'
+        values: "0x10"
+      - series: 'gateway_upstream_up{job="mcp-gateway",namespace="mcp-gateway",pod="b",upstream="wiki"}'
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: McpGatewayUpstreamDown
+        exp_alerts:
+          - exp_labels: { severity: warning, upstream: crm }
+            exp_annotations:
+              summary: "Upstream crm is down for every gateway pod"
+              description: "tools/call to crm_* fails; check gateway_upstream_errors_total and /internal/upstreams/health."
+              runbook_url: "https://github.com/aasthapit/mcp-gateway/blob/main/docs/runbook.md#mcpgatewayupstreamdown"
+
+  # 5xx ratio: 5 % of /mcp responses for 10 minutes; probes do not count.
+  - interval: 1m
+    input_series:
+      - series: 'gateway_http_responses_total{job="mcp-gateway",namespace="mcp-gateway",pod="a",route="mcp",code="2xx"}'
+        values: "0+570x20"
+      - series: 'gateway_http_responses_total{job="mcp-gateway",namespace="mcp-gateway",pod="a",route="mcp",code="5xx"}'
+        values: "0+30x20"
+      - series: 'gateway_http_responses_total{job="mcp-gateway",namespace="mcp-gateway",pod="a",route="probe",code="5xx"}'
+        values: "0+1000x20"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: McpGatewayHigh5xxRatio
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "More than 2 % of /mcp responses are HTTP 5xx"
+              description: "Upstream and tool failures are MCP errors inside HTTP 200; 5xx means the gateway itself fails (crash, overload, bad deploy)."
+              runbook_url: "https://github.com/aasthapit/mcp-gateway/blob/main/docs/runbook.md#mcpgatewayhigh5xxratio"
+
+  # Healthy fleet: 0.5 % 5xx, steady low denials, no rate limiting -> nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'gateway_http_responses_total{job="mcp-gateway",namespace="mcp-gateway",pod="a",route="mcp",code="2xx"}'
+        values: "0+995x90"
+      - series: 'gateway_http_responses_total{job="mcp-gateway",namespace="mcp-gateway",pod="a",route="mcp",code="5xx"}'
+        values: "0+5x90"
+      - series: 'gateway_policy_denials_total{job="mcp-gateway",namespace="mcp-gateway",pod="a",tool="x",principal_kind="anonymous"}'
+        values: "0+30x90" # 0.5/s, below the 1/s floor
+    alert_rule_test:
+      - eval_time: 85m
+        alertname: McpGatewayHigh5xxRatio
+        exp_alerts: []
+      - eval_time: 85m
+        alertname: McpGatewayDenialSpike
+        exp_alerts: []
+      - eval_time: 85m
+        alertname: McpGatewayRateLimitSpike
+        exp_alerts: []
+
+  # Denial spike: 0.2/s for an hour, then 6/s.
+  - interval: 1m
+    input_series:
+      - series: 'gateway_policy_denials_total{job="mcp-gateway",namespace="mcp-gateway",pod="a",tool="x",principal_kind="user"}'
+        values: "0+12x70 852+360x20"
+    alert_rule_test:
+      - eval_time: 69m
+        alertname: McpGatewayDenialSpike
+        exp_alerts: []
+      - eval_time: 82m
+        alertname: McpGatewayDenialSpike
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Policy denials jumped to 6/s"
+              description: "Check the tools.call.denied audit events for the principals and tools involved, and policy_history for a recent change."
+              runbook_url: "https://github.com/aasthapit/mcp-gateway/blob/main/docs/runbook.md#mcpgatewaydenialspike"
+
+  # Rate limiting of anonymous callers at 10/s for 15 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'gateway_rate_limited_total{job="mcp-gateway",namespace="mcp-gateway",pod="a",principal_kind="anonymous"}'
+        values: "0+600x20"
+      - series: 'gateway_rate_limited_total{job="mcp-gateway",namespace="mcp-gateway",pod="a",principal_kind="user"}'
+        values: "0x20"
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: McpGatewayRateLimitSpike
+        exp_alerts:
+          - exp_labels: { severity: warning, principal_kind: anonymous }
+            exp_annotations:
+              summary: "anonymous callers are rate limited at 10/s"
+              description: "Per-pod token buckets are rejecting requests: a misbehaving client, a NAT hiding many guests behind one IP, or limits set too low for real traffic."
+              runbook_url: "https://github.com/aasthapit/mcp-gateway/blob/main/docs/runbook.md#mcpgatewayratelimitspike"

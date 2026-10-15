@@ -1,0 +1,29 @@
+# Local OpenTelemetry Collector (WP7): receives OTLP from a gateway running on the host
+# with GATEWAY_TELEMETRY_MODE=native and prints every span (debug exporter, detailed).
+#   make traces            # one traced tools/call, then the spans of that trace
+#   make logs SVC=otel-collector
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  telemetry:
+    logs:
+      level: info # the debug exporter writes spans at info level
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

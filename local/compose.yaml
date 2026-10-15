@@ -176,6 +176,22 @@ services:
       start_period: 5s
 
   # ---------------------------------------------------------------------------
+  # WP7: OpenTelemetry Collector with the debug exporter. A host-run gateway with
+  # GATEWAY_TELEMETRY_MODE=native exports to localhost:4318 (http/protobuf) or :4317 (grpc);
+  # `make traces` sends one traced tools/call and prints its spans from this log.
+  # ---------------------------------------------------------------------------
+  otel-collector:
+    image: docker.io/otel/opentelemetry-collector:0.161.0
+    container_name: mcp-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/collector.yaml"]
+    ports:
+      - "${OTLP_GRPC_PORT:-4317}:4317"
+      - "${OTLP_HTTP_PORT:-4318}:4318"
+    volumes:
+      - ./otel/collector.yaml:/etc/otelcol/collector.yaml:ro
+
+  # ---------------------------------------------------------------------------
   # WP1: the gateway. Uncomment once gateway/Containerfile exists.
   # ---------------------------------------------------------------------------
   # gateway:

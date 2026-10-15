@@ -9,6 +9,8 @@ LOCAL   := local
 ENVFILE := $(LOCAL)/.env
 CF      := $(COMPOSE) -f $(LOCAL)/compose.yaml --env-file $(ENVFILE)
 PY      ?= python3
+# pre-commit from PATH, else run it through uv without installing it.
+PRE_COMMIT ?= $(shell command -v pre-commit >/dev/null 2>&1 && echo pre-commit || echo "uvx pre-commit")
 
 # Keycloak (host-visible). Overridable: make token KC_USER=admin1 KC_PASS=admin1
 # (not USER/PASS: the shell exports USER as the login name and would win over ?=)
@@ -18,6 +20,7 @@ KC_USER ?= dev1
 KC_PASS ?= $(KC_USER)
 
 .PHONY: help env up down logs ps restart seed validators validate-seed token token-ci decode mongosh smoke lint fmt pre-commit clean \
+	traces loadtest drills \
 	deploy-check deploy-lint deploy-template deploy-kubeconform deploy-policy deploy-schemas deploy-image
 
 help: ## list targets
@@ -79,14 +82,29 @@ smoke: env ## end-to-end checks: infra, then guest + garbage-bearer + dev1 MCP c
 	@tok=$$($(MAKE) -s token KC_USER=dev1) && cd gateway && GATEWAY_SMOKE_TOKEN="$$tok" uv run --frozen python -m mcp_gateway.smoke $(GATEWAY_URL)
 
 lint: ## ruff + prettier + schema check via pre-commit
-	pre-commit run --all-files --show-diff-on-failure
+	$(PRE_COMMIT) run --all-files --show-diff-on-failure
 
 fmt: ## auto-format (ruff format, prettier)
-	pre-commit run ruff-format --all-files || true
-	pre-commit run prettier --all-files || true
+	$(PRE_COMMIT) run ruff-format --all-files || true
+	$(PRE_COMMIT) run prettier --all-files || true
 
 pre-commit: ## install the git hook
-	pre-commit install
+	$(PRE_COMMIT) install
+
+# ---------------------------------------------------------------------------------------
+# WP7: traces, load test, failure drills. See docs/perf.md and docs/runbook.md.
+# ---------------------------------------------------------------------------------------
+CONTAINER ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
+
+traces: env ## one traced guest tools/call through an in-process gateway; prints its spans from the otel-collector
+	$(CF) up -d otel-collector
+	@cd gateway && TRACES_LOGS_CMD="$(CONTAINER) logs mcp-otel-collector" uv run --frozen python -m mcp_gateway.tracecheck
+
+loadtest: env ## k6 load test (guest/dev1 list+call, listen holders, cold lists) against two host gateways; writes loadtest/results/
+	@tok=$$($(MAKE) -s token KC_USER=dev1) && LOADTEST_DEV1_TOKEN="$$tok" loadtest/run.sh
+
+drills: env ## failure drills (Mongo restart, upstream down, IdP down, rolling restart) against the local stack
+	cd gateway && GATEWAY_DRILLS=1 CONTAINER="$(CONTAINER)" uv run --frozen pytest -m drill tests/drills -v
 
 # ---------------------------------------------------------------------------------------
 # deploy/ (WP6): Helm charts + OpenShift manifests. See deploy/README.md.

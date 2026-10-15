@@ -5,17 +5,18 @@ Helm charts for the gateway and the admin API/UI, the MongoDB cluster (Percona o
 Argo CD applications, a Tekton build pipeline, and the local validation that CI runs.
 Design: [docs/PLAN.md §3.6](../docs/PLAN.md), decisions: [ADR 0010](../docs/adr/0010-openshift-packaging.md).
 
-| Path                    | What                                                                                                                     |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `helm/mcp-gateway/`     | Gateway chart: Deployment, Service, Route, HPA, PDB, NetworkPolicy, SA, ConfigMap, ExternalSecret/Secret, ServiceMonitor |
-| `helm/mcp-admin/`       | Admin API + UI chart skeleton (WP5 sets images and env)                                                                  |
-| `openshift/namespaces/` | `mcp-gateway` and `mcp-upstreams` namespaces (PSA restricted) + upstream ingress policy                                  |
-| `openshift/mongodb/`    | Percona `PerconaServerMongoDB` CR (3-member replica set, TLS, backups, SCRAM users) + operator subscription              |
-| `openshift/argocd/`     | Argo CD `Application` (prod) and `ApplicationSet` (dev/staging/prod x both charts)                                       |
-| `openshift/tekton/`     | Pipeline: test, build (buildah), scan (Trivy), promote by digest (skopeo), bump values (yq + git)                        |
-| `policy/`               | conftest (Rego) rules for the restricted SCC and workload hygiene, with unit tests                                       |
-| `kubeconform/`          | CRD schema fetcher for kubeconform (cache is gitignored)                                                                 |
-| `deploy-check.sh`       | `make deploy-check`: lint, template, kubeconform, conftest, kube-score                                                   |
+| Path                    | What                                                                                                                                     |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `helm/mcp-gateway/`     | Gateway chart: Deployment, Service, Route, HPA, PDB, NetworkPolicy, SA, ConfigMap, ExternalSecret/Secret, ServiceMonitor, PrometheusRule |
+| `helm/mcp-admin/`       | Admin API + UI chart skeleton (WP5 sets images and env)                                                                                  |
+| `openshift/namespaces/` | `mcp-gateway` and `mcp-upstreams` namespaces (PSA restricted) + upstream ingress policy                                                  |
+| `openshift/mongodb/`    | Percona `PerconaServerMongoDB` CR (3-member replica set, TLS, backups, SCRAM users) + operator subscription                              |
+| `openshift/argocd/`     | Argo CD `Application` (prod) and `ApplicationSet` (dev/staging/prod x both charts)                                                       |
+| `openshift/tekton/`     | Pipeline: test, build (buildah), scan (Trivy), promote by digest (skopeo), bump values (yq + git)                                        |
+| `policy/`               | conftest (Rego) rules for the restricted SCC and workload hygiene, with unit tests                                                       |
+| `kubeconform/`          | CRD schema fetcher for kubeconform (cache is gitignored)                                                                                 |
+| `alerts/`               | `promtool` unit tests for the gateway's PrometheusRule (alerts explained in [docs/runbook.md](../docs/runbook.md))                       |
+| `deploy-check.sh`       | `make deploy-check`: lint, template, kubeconform, conftest, kube-score                                                                   |
 
 ## Prerequisites (cluster)
 
@@ -27,7 +28,8 @@ Design: [docs/PLAN.md §3.6](../docs/PLAN.md), decisions: [ADR 0010](../docs/adr
 - A `ClusterSecretStore` named `vault-backend` (or change `externalSecrets.secretStoreRef`).
 - Namespace-level access to `mcp-gateway`; `oc apply` of the namespaces needs cluster-admin.
 
-Local tools for validation: `brew install helm kubeconform conftest kube-score`.
+Local tools for validation: `brew install helm kubeconform conftest kube-score prometheus`
+(`prometheus` provides `promtool`).
 
 ## First install (dev cluster, by hand)
 
@@ -89,8 +91,14 @@ non-https `GATEWAY_PUBLIC_BASE_URL` in prod).
 
 Rolling update is `maxSurge: 1, maxUnavailable: 0`; the PDB keeps 2 pods during node drains.
 Each pod runs one uvicorn worker (one change stream, one upstream pool): scale with replicas,
-never with workers. Pods take up to 60 s to drain (`terminationGracePeriodSeconds`), with a
-5 s preStop sleep so the router stops sending traffic before SIGTERM.
+never with workers. Pods take up to 60 s to drain (`terminationGracePeriodSeconds`). First a
+5 s preStop sleep lets the router stop sending traffic. Then, on SIGTERM, the gateway turns
+`/readyz` to 503, closes listen streams gracefully, and gives in-flight calls
+`config.SHUTDOWN_GRACE_SEC` (45 s). Capacity per pod and HPA guidance are in
+[docs/runbook.md](../docs/runbook.md#scaling) and [docs/perf.md](../docs/perf.md).
+Replicas avoid sharing a node through a soft `podAntiAffinity` on `kubernetes.io/hostname`
+(`podAntiAffinity.enabled`; an explicit `affinity` replaces it). With the HPA on, the
+Deployment has no `replicas` field, so Argo CD and the HPA never fight over it.
 
 HPA scales on CPU (70 % by default). `autoscaling.listenStreams.enabled: true` adds the
 custom metric `gateway_open_listen_streams` (pods metric), which needs the Prometheus
@@ -190,7 +198,7 @@ Runs on this Mac and in CI (`.github/workflows/ci.yml`, job `deploy-check`):
 1. `helm lint --strict` for both charts and every overlay.
 2. `helm template` into `deploy/.render/<chart>-<env>.yaml`.
 3. `kubeconform -strict` against the Kubernetes 1.32 schemas plus CRD schemas for Route,
-   ExternalSecret, ServiceMonitor, PerconaServerMongoDB, Argo CD and Tekton.
+   ExternalSecret, ServiceMonitor, PrometheusRule, PerconaServerMongoDB, Argo CD and Tekton.
    `kubeconform/fetch-schemas.sh` downloads them into `kubeconform/cache/` (gitignored):
    pre-converted JSON from the `datreeio/CRDs-catalog`, and for Route (openshift/api
    `release-4.19`) and Tekton (`v1.17.0` release manifest) the CRD `openAPIV3Schema` is
@@ -203,7 +211,14 @@ Runs on this Mac and in CI (`.github/workflows/ci.yml`, job `deploy-check`):
    limit == request, probes, `automountServiceAccountToken: false`, no `:latest`, Routes with
    edge/reencrypt TLS, the gateway Route's timeout and cookie annotations, no chart-rendered
    Secret in prod renders. `conftest verify` runs the policy's own unit tests.
-5. `kube-score` (advisory; `KUBE_SCORE_STRICT=1` to fail on it).
+5. `promtool check rules` on the gateway's PrometheusRule (prod render), then
+   `promtool test rules alerts/alerts_test.yaml`, which checks each alert fires on a
+   synthetic failure and stays quiet on a healthy fleet. This step is skipped with a note
+   when promtool is missing (`PROMTOOL_STRICT=1` makes that fatal).
+6. `kube-score` on each render separately (advisory; `KUBE_SCORE_STRICT=1` to fail on it).
+   Scoring all renders together paired the dev Deployment's `replicas` with the prod HPA
+   of the same name. The remaining gateway finding is "few replicas" on the one-replica dev
+   overlay, which is intended. The admin chart's findings are WP5's.
 
 `make deploy-image` builds `gateway/Containerfile` as `<image.repository>:<appVersion>` with
 podman, the exact reference the default render uses. Verified on this Mac: the image runs

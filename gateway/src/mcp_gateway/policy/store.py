@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -127,6 +128,9 @@ class MongoPolicyStore:
         self.full_reopens: int = 0
         """Stream reopens without a token (first open, history lost, invalidate)."""
         self.resume_token: Any = None
+        self.verified_at: float | None = None
+        """``time.monotonic()`` of the last load or version poll that matched the loaded
+        version: the basis of ``gateway_policy_staleness_seconds``."""
         CHANGE_STREAM_UP.set(0)
 
     # -- connection -----------------------------------------------------------------------
@@ -177,6 +181,7 @@ class MongoPolicyStore:
         for collection, n in report.invalid.items():
             POLICY_INVALID_DOCS.labels(collection=collection).set(n)
         self.loaded_version = after
+        self.verified_at = time.monotonic()
         return snapshot
 
     # -- watch ----------------------------------------------------------------------------
@@ -206,7 +211,9 @@ class MongoPolicyStore:
             except PyMongoError as exc:
                 log.warning("policy version poll failed", error=f"{type(exc).__name__}: {exc}")
                 continue
-            if version != self.loaded_version:
+            if version == self.loaded_version:
+                self.verified_at = time.monotonic()
+            else:
                 log.info(
                     "policy version poll detected a change",
                     stored=version,

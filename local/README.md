@@ -2,15 +2,16 @@
 
 Local development stack (`compose.yaml`), driven by the root `Makefile`.
 
-| Service          | Host port | Notes                                                                          |
-| ---------------- | --------- | ------------------------------------------------------------------------------ |
-| `mongo`          | 27017     | `mongo:8`, single-node replica set `rs0`, keyfile auth, root user from `.env`  |
-| `mongo-init`     | –         | one-shot: `rs.initiate` + `$jsonSchema` validators; also runs `make seed`      |
-| `keycloak`       | 8180      | dev mode, realm `mcp` imported from `keycloak/realm.json`, admin `admin/admin` |
-| `sample-public`  | 8081      | FastMCP upstream: `time_now`, `echo`                                           |
-| `sample-private` | 8082      | FastMCP upstream: `secret_lookup`                                              |
-| `gateway`        | 8080      | **WP1** (commented placeholder)                                                |
-| `admin-api/ui`   | 3001/3000 | **WP5** (commented placeholder)                                                |
+| Service          | Host port | Notes                                                                                 |
+| ---------------- | --------- | ------------------------------------------------------------------------------------- |
+| `mongo`          | 27017     | `mongo:8`, single-node replica set `rs0`, keyfile auth, root user from `.env`         |
+| `mongo-init`     | –         | one-shot: `rs.initiate` + `$jsonSchema` validators; also runs `make seed`             |
+| `keycloak`       | 8180      | dev mode, realm `mcp` imported from `keycloak/realm.json`, admin `admin/admin`        |
+| `sample-public`  | 8081      | FastMCP upstream: `time_now`, `echo`                                                  |
+| `sample-private` | 8082      | FastMCP upstream: `secret_lookup`                                                     |
+| `otel-collector` | 4317/4318 | OTLP grpc/http in, debug exporter out (`make traces`, `make logs SVC=otel-collector`) |
+| `gateway`        | 8080      | **WP1** (commented placeholder)                                                       |
+| `admin-api/ui`   | 3001/3000 | **WP5** (commented placeholder)                                                       |
 
 Connection strings:
 

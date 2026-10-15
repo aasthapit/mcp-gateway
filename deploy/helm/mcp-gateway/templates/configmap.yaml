@@ -18,6 +18,7 @@ data:
   {{- end }}
   {{- end }}
   {{- if ne (toString .Values.config.TELEMETRY_MODE) "off" }}
-  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.telemetry.otlpEndpoint | quote }}
-  OTEL_SERVICE_NAME: {{ .Values.telemetry.serviceName | quote }}
+  GATEWAY_OTLP_ENDPOINT: {{ .Values.telemetry.otlpEndpoint | quote }}
+  GATEWAY_OTLP_PROTOCOL: {{ .Values.telemetry.otlpProtocol | quote }}
+  GATEWAY_OTEL_SERVICE_NAME: {{ .Values.telemetry.serviceName | quote }}
   {{- end }}

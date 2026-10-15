@@ -32,6 +32,8 @@ class ReadinessProbe:
 @dataclass
 class Readiness:
     started: bool = False
+    draining: bool = False
+    """Set at the start of graceful shutdown: /readyz answers 503 from then on."""
     probes: list[ReadinessProbe] = field(default_factory=list)
 
     def register(self, name: str, check: ProbeFn, *, critical: bool = True) -> None:
@@ -40,7 +42,9 @@ class Readiness:
 
     async def evaluate(self) -> tuple[bool, dict[str, Any]]:
         detail: dict[str, Any] = {"started": self.started, "checks": {}}
-        ready = self.started
+        if self.draining:
+            detail["draining"] = True
+        ready = self.started and not self.draining
         for probe in self.probes:
             try:
                 res = probe.check()
