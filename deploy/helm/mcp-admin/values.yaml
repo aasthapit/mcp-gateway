@@ -1,5 +1,6 @@
-# mcp-admin: two Deployments (api, ui) behind one Route. WP5 fills in images and env; the
-# OpenShift hygiene (restricted SCC, default-deny NetworkPolicy, ESO secrets) is already here.
+# mcp-admin: two Deployments (api, ui) behind one Route host (/ -> ui, /api -> api).
+# Images: admin-api/Containerfile and admin-ui/Containerfile (build context = repo root).
+# Env reference: admin-api/README.md and admin-ui/README.md.
 
 nameOverride: ""
 fullnameOverride: ""
@@ -34,16 +35,22 @@ api:
     pullPolicy: IfNotPresent
   replicaCount: 2
   port: 3001
-  # Non-secret env (plain name/value). Secrets come from `secrets`/`externalSecrets`.
+  # Non-secret env (plain name/value) -> ConfigMap. Secrets (ADMIN_MONGO_URI and the
+  # gateway internal token) come from `secrets` / `externalSecrets` / `internalToken`.
+  # ADMIN_CORS_ORIGINS defaults to https://<route.host> when unset.
   env:
     NODE_ENV: production
-    PORT: "3001"
-    MONGO_DB: mcp_gateway
-    OIDC_ISSUER: https://idp.example.com/realms/mcp
-    JWT_AUDIENCE: mcp-admin
-    ADMIN_ROLE: mcp-admin
+    ADMIN_ENV: prod
+    ADMIN_PORT: "3001"
+    ADMIN_MONGO_DB: mcp_gateway
+    ADMIN_OIDC_ISSUER: https://idp.example.com/realms/mcp
+    ADMIN_JWT_AUDIENCE: mcp-admin
+    ADMIN_REQUIRED_ROLE: mcp-admin
+    ADMIN_ROLES_CLAIM: realm_access.roles
+    ADMIN_TRUST_PROXY: "true"
+    ADMIN_LOG_LEVEL: info
     # In-cluster gateway Service (deploy/helm/mcp-gateway); /internal/* is NetworkPolicy-gated.
-    GATEWAY_INTERNAL_URL: http://mcp-gateway.mcp-gateway.svc:8080/internal
+    ADMIN_GATEWAY_INTERNAL_URL: http://mcp-gateway.mcp-gateway.svc:8080
   extraEnv: []
   probes:
     readinessPath: /readyz
@@ -66,14 +73,20 @@ ui:
     pullPolicy: IfNotPresent
   replicaCount: 2
   port: 3000
+  # Served to the browser as /config.json (one image for every environment).
   env:
-    PORT: "3000"
-    # Same-origin: the Route sends /api to the api Service.
-    API_BASE_URL: /api
+    ADMIN_UI_PORT: "3000"
+    # Empty = same origin: the Route sends /api to the api Service.
+    ADMIN_UI_API_BASE_URL: ""
+    ADMIN_UI_OIDC_AUTHORITY: https://idp.example.com/realms/mcp
+    ADMIN_UI_OIDC_CLIENT_ID: mcp-admin-ui
+    ADMIN_UI_GATEWAY_MCP_URL: https://mcp.example.com/mcp
+    ADMIN_UI_ENVIRONMENT: prod
   extraEnv: []
   probes:
-    readinessPath: /
-    livenessPath: /
+    # Ready once it serves the runtime config the SPA boots from; alive while /healthz answers.
+    readinessPath: /config.json
+    livenessPath: /healthz
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 250m, memory: 128Mi }
@@ -86,11 +99,10 @@ ui:
 # ---------------------------------------------------------------------------------------
 secrets:
   env:
-    name: "" # default <fullname>-api-env (MONGO_URI, GATEWAY_INTERNAL_TOKEN)
+    name: "" # default <fullname>-api-env (ADMIN_MONGO_URI)
   create: false # DEV ONLY plain Secret from values
   values:
     mongoUri: ""
-    internalToken: ""
 
 externalSecrets:
   enabled: true
@@ -100,10 +112,14 @@ externalSecrets:
     name: vault-backend
     kind: ClusterSecretStore
   data:
-    - secretKey: MONGO_URI
+    - secretKey: ADMIN_MONGO_URI
       remoteRef: { key: mcp-admin/mongo, property: uri }
-    - secretKey: GATEWAY_INTERNAL_TOKEN
-      remoteRef: { key: mcp-gateway/internal, property: token }
+
+# The gateway's /internal token is read from the Secret the gateway chart's ExternalSecret
+# (or dev Secret) materialises, so both sides always hold the same value and rotate together.
+internalToken:
+  secretName: mcp-gateway-env
+  key: GATEWAY_INTERNAL_TOKEN
 
 mongoCA:
   enabled: true
