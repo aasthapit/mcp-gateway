@@ -37,6 +37,8 @@ from fastmcp import Client
 from mcp.client.subscriptions import ToolsListChanged, listen
 from pymongo import MongoClient, WriteConcern
 
+from mcp_gateway.debug_tools import DEBUG_TOOL_NAMES
+
 GUEST_TOOLS = {"sample-public_time_now", "sample-public_echo"}
 PRIVATE_TOOL = "sample-private_secret_lookup"
 EXPECTED_SUFFIXES = {"time_now", "echo", "secret_lookup"}
@@ -129,8 +131,9 @@ def _set_allow(mongo: MongoClient[Any], db_name: str, allow: list[str]) -> int:
 
 
 async def _tools(base: str) -> set[str]:
+    """Upstream tools the guest sees (dev-only gateway tools such as whoami excluded)."""
     async with Client(base + "/mcp", mode="2026-07-28") as c:
-        return {t.name for t in await c.list_tools()}
+        return {t.name for t in await c.list_tools()} - DEBUG_TOOL_NAMES
 
 
 async def _wait_tools(base: str, predicate: Any, what: str) -> float:
@@ -186,7 +189,7 @@ async def check(base: str, token: str | None, internal_token: str | None) -> Non
 
     async with Client(base + "/mcp") as c:
         names = {t.name for t in await c.list_tools()}
-        if names != GUEST_TOOLS:
+        if names - DEBUG_TOOL_NAMES != GUEST_TOOLS:
             raise SystemExit(
                 f"guest tools/list should be exactly {sorted(GUEST_TOOLS)}; got {sorted(names)}"
             )
