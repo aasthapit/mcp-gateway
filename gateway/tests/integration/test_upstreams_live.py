@@ -173,9 +173,7 @@ def test_catalog_and_health(gateway: tuple[Gateway, str]) -> None:
     )
     h = health(base)
     assert h["sample-public"]["tool_count"] == 2 and h["sample-private"]["tool_count"] == 1
-    assert (
-        h["sample-public"]["session_mode"] == "per_request"
-    )  # shared needs protocolMode 2026-07-28
+    assert h["sample-public"]["session_mode"] == "shared"  # seed pins protocolMode 2026-07-28
     assert httpx.get(base + "/internal/catalog").status_code == 403
     readyz = httpx.get(base + "/readyz").json()
     assert readyz["checks"]["upstreams"]["mounted"] == ["sample-private", "sample-public"]
@@ -218,7 +216,9 @@ async def test_private_upstream_down_and_recovery(gateway: tuple[Gateway, str]) 
             assert (
                 await c.call_tool("sample-public_echo", {"text": "still up"})
             ).data == "still up"
-            with pytest.raises(Exception, match=r"connect|Unknown tool|unavailable") as exc:
+            # shared mode (seed pins protocolMode 2026-07-28): an already-connected shared
+            # client reports "Connection closed"; a fresh one reports a connect failure.
+            with pytest.raises(Exception, match=r"connect|closed|Unknown tool|unavailable") as exc:
                 await c.call_tool("sample-private_secret_lookup", {"key": "launch-code"})
             assert "launch-code" not in str(exc.value)  # no argument echo in the error
         text = httpx.get(base + "/metrics").text

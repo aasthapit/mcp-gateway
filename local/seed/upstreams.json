@@ -7,6 +7,7 @@
     "url": "http://localhost:8081/mcp",
     "auth": { "type": "none" },
     "sessionMode": "shared",
+    "protocolMode": "2026-07-28",
     "timeoutsMs": { "connect": 2000, "call": 30000 },
     "cacheTtlSec": 60,
     "tags": ["sample", "public"]
@@ -19,6 +20,7 @@
     "url": "http://localhost:8082/mcp",
     "auth": { "type": "none" },
     "sessionMode": "shared",
+    "protocolMode": "2026-07-28",
     "timeoutsMs": { "connect": 2000, "call": 30000 },
     "cacheTtlSec": 60,
     "tags": ["sample", "private"]
