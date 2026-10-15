@@ -11,6 +11,7 @@ repos:
         args: [--markdown-linebreak-ext=md]
       - id: check-json
       - id: check-yaml
+        args: [--allow-multiple-documents] # deploy/openshift manifests are multi-doc
       - id: check-merge-conflict
       - id: check-added-large-files
 

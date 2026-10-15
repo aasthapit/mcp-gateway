@@ -90,7 +90,10 @@ spec:
         - { name: CONTEXT, value: ./gateway }
         - { name: TLSVERIFY, value: "true" }
         - { name: FORMAT, value: oci }
-        - { name: BUILD_EXTRA_ARGS, value: "--label org.opencontainers.image.revision=$(tasks.fetch.results.commit) --label org.opencontainers.image.version=$(params.version)" }
+        - {
+            name: BUILD_EXTRA_ARGS,
+            value: "--label org.opencontainers.image.revision=$(tasks.fetch.results.commit) --label org.opencontainers.image.version=$(params.version)",
+          }
 
     - name: scan
       runAfter: [build]
@@ -121,4 +124,7 @@ spec:
         - { name: tag, value: $(params.version) }
         - { name: digest, value: $(tasks.promote.results.digest) }
         - { name: branch, value: $(params.push-branch) }
-        - { name: commit-message, value: "deploy: mcp-gateway $(params.version) @ $(tasks.promote.results.digest) (build $(tasks.fetch.results.commit))" }
+        - {
+            name: commit-message,
+            value: "deploy: mcp-gateway $(params.version) @ $(tasks.promote.results.digest) (build $(tasks.fetch.results.commit))",
+          }
