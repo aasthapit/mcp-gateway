@@ -73,9 +73,9 @@ decode: ## decode the claims of a token: make decode TOKEN=... (defaults to `mak
 	@tok="$(TOKEN)"; [ -n "$$tok" ] || tok=$$($(MAKE) -s token); \
 	$(PY) -c 'import sys,base64,json; p=sys.argv[1].split(".")[1]; print(json.dumps(json.loads(base64.urlsafe_b64decode(p+"="*(-len(p)%4))), indent=2))' "$$tok"
 
-smoke: env ## end-to-end checks: infra, then guest + garbage-bearer + dev1 MCP clients through the gateway incl. a live toolset edit (GATEWAY_URL=... to test a running one)
+smoke: env ## end-to-end checks: infra, then guest + garbage-bearer + dev1 MCP clients, a live toolset edit and /internal/catalog through the gateway (GATEWAY_URL=... and GATEWAY_INTERNAL_TOKEN=... to test a running one)
 	COMPOSE="$(COMPOSE)" $(LOCAL)/smoke.sh
-	@echo "gateway (guest, garbage bearer, Mongo policy, live allow-list change, dev1 client)"
+	@echo "gateway (guest, garbage bearer, Mongo policy, live allow-list change, /internal/catalog, dev1 client)"
 	@tok=$$($(MAKE) -s token KC_USER=dev1) && cd gateway && GATEWAY_SMOKE_TOKEN="$$tok" uv run --frozen python -m mcp_gateway.smoke $(GATEWAY_URL)
 
 lint: ## ruff + prettier + schema check via pre-commit

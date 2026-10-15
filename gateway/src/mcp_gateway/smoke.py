@@ -11,7 +11,9 @@ cannot call a private tool, resources/prompts are hidden; then a live allow-list
 ``subscriptions/listen`` stream is opened, ``public-basics`` is edited in Mongo (with the
 ``meta.version`` bump an admin write does, ``w: majority``), the next ``tools/list`` must
 reflect it within 2 s and the stream must carry ``notifications/tools/list_changed``; the
-edit is reverted the same way; the policy metrics are printed. Finally, with
+edit is reverted the same way; the policy metrics are printed. With an internal token
+(``GATEWAY_INTERNAL_TOKEN``, generated for the in-process run) ``/internal/catalog`` and
+``/internal/upstreams/health`` are checked. Finally, with
 ``GATEWAY_SMOKE_TOKEN`` (the Makefile passes ``make token`` = dev1), the same client with
 the bearer must see the ``engineering`` toolset on top of the guest floor, and the dev-only
 ``gateway_whoami`` tool prints the principal.
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 import socket
 import sys
 import threading
@@ -36,6 +39,8 @@ from pymongo import MongoClient, WriteConcern
 
 GUEST_TOOLS = {"sample-public_time_now", "sample-public_echo"}
 PRIVATE_TOOL = "sample-private_secret_lookup"
+EXPECTED_SUFFIXES = {"time_now", "echo", "secret_lookup"}
+
 MODERN_HEADERS = {
     "Accept": "application/json, text/event-stream",
     "MCP-Protocol-Version": "2026-07-28",
@@ -55,6 +60,19 @@ TOOLS_LIST = {
 TOOLSET = "public-basics"
 PROPAGATION_BUDGET_SEC = 2.0
 MAJORITY = WriteConcern(w="majority", wtimeout=10_000)
+
+
+def _skip(msg: str) -> None:
+    print(f"  skip  {msg}")
+
+
+def _by_suffix(names: set[str]) -> dict[str, str]:
+    found: dict[str, str] = {}
+    for suffix in EXPECTED_SUFFIXES:
+        matches = sorted(n for n in names if n.endswith("_" + suffix))
+        if matches:
+            found[suffix] = matches[0]
+    return found
 
 
 def _free_port() -> int:
@@ -143,7 +161,7 @@ def _principal_line(p: dict[str, Any]) -> str:
     )
 
 
-async def check(base: str, token: str | None) -> None:
+async def check(base: str, token: str | None, internal_token: str | None) -> None:
     ready = _wait_ready(base)
     policy = ready.get("checks", {}).get("policy", {})
     _ok(
@@ -252,6 +270,36 @@ async def check(base: str, token: str | None) -> None:
         f"metrics: gateway_policy_version={version_m} gateway_policy_age_seconds={age_m} gateway_change_stream_up={stream_m}"
     )
 
+    # -- internal routes (admin API surface) ------------------------------------------
+    if not internal_token:
+        _skip("/internal/catalog (set GATEWAY_INTERNAL_TOKEN to check it)")
+    else:
+        headers = {"X-Internal-Token": internal_token}
+        if httpx.get(base + "/internal/catalog", timeout=10).status_code != 403:
+            raise SystemExit("/internal/catalog without token should be 403")
+        r = httpx.get(base + "/internal/catalog", headers=headers, timeout=10)
+        if r.status_code != 200:
+            raise SystemExit(f"/internal/catalog -> {r.status_code}: {r.text}")
+        body = r.json()
+        cat_names = {t["namespaced_name"] for t in body["tools"]}
+        missing = EXPECTED_SUFFIXES - set(_by_suffix(cat_names))
+        if missing:
+            raise SystemExit(f"catalog missing *_{sorted(missing)}; got {sorted(cat_names)}")
+        if any(not t["input_schema"] for t in body["tools"] if t["name"] == "echo"):
+            raise SystemExit("catalog entry for echo has no input_schema")
+        _ok(
+            f"/internal/catalog lists {len(cat_names)} tools from {sorted(body['upstreams'])} (403 without token)"
+        )
+        h = httpx.get(base + "/internal/upstreams/health", headers=headers, timeout=10).json()[
+            "upstreams"
+        ]
+        down = sorted(u for u, s in h.items() if s["status"] not in ("up", "unknown"))
+        if down:
+            raise SystemExit(f"upstreams not healthy: {down}")
+        _ok(
+            f"/internal/upstreams/health: {', '.join(f'{u}={s["status"]}' for u, s in sorted(h.items()))}"
+        )
+
     # -- dev1: bearer token, engineering toolset on top of the guest floor ------------
     if not token:
         print(
@@ -280,8 +328,9 @@ async def check(base: str, token: str | None) -> None:
 def main(argv: list[str]) -> None:
     token = os.environ.get("GATEWAY_SMOKE_TOKEN") or None
     if argv:
-        asyncio.run(check(argv[0].rstrip("/"), token))
+        asyncio.run(check(argv[0].rstrip("/"), token, os.environ.get("GATEWAY_INTERNAL_TOKEN")))
         return
+    internal_token = os.environ.get("GATEWAY_INTERNAL_TOKEN") or secrets.token_urlsafe(16)
     from mcp_gateway.app import build_gateway
     from mcp_gateway.settings import load_settings
 
@@ -291,15 +340,18 @@ def main(argv: list[str]) -> None:
             metrics_port=0,
             log_level=os.environ.get("GATEWAY_LOG_LEVEL", "WARNING"),
             policy_source="mongo",
+            internal_token=internal_token,
+            upstream_probe_sec=1,
         )
     )
+    print(f"  info  in-process gateway, upstreams from {gw.settings.upstreams_source}")
     server = uvicorn.Server(
         uvicorn.Config(gw.app, host="127.0.0.1", port=port, log_config=None, lifespan="on")
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     try:
-        asyncio.run(check(f"http://127.0.0.1:{port}", token))
+        asyncio.run(check(f"http://127.0.0.1:{port}", token, internal_token))
     finally:
         server.should_exit = True
         thread.join(10)

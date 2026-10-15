@@ -35,7 +35,7 @@ from mcp_gateway.telemetry import get_logger
 
 log = get_logger(__name__)
 
-ChangeReason = Literal["initial", "stream", "poll"]
+ChangeReason = Literal["initial", "stream", "poll", "manual"]
 
 POLICY_COLLECTIONS: tuple[str, ...] = ("upstreams", "toolsets", "grants", "meta")
 META_ID = "policy"

@@ -25,10 +25,15 @@ def port_open(host: str, port: int, timeout: float = 0.5) -> bool:
 
 @pytest.fixture
 def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
-    """Unit-test settings: static (allow-all) policy, no metrics listener, console logs."""
+    """Unit-test settings: static (allow-all) policy and static upstreams (no Mongo
+    needed), no separate metrics listener, console logs, no env leakage."""
     for key in list(__import__("os").environ):
         if key.startswith("GATEWAY_"):
             monkeypatch.delenv(key)
     return load_settings(
-        metrics_port=0, log_json=False, log_level="WARNING", policy_source="static"
+        metrics_port=0,
+        log_json=False,
+        log_level="WARNING",
+        policy_source="static",
+        upstreams_source="static",
     )

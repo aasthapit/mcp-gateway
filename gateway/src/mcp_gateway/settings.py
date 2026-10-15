@@ -36,6 +36,7 @@ ASYMMETRIC_JWS_ALGORITHMS: dict[str, str] = {
     "Ed25519": "OKP",
     "Ed448": "OKP",
 }
+UpstreamsSource = Literal["mongo", "static"]
 
 
 class StaticUpstream(BaseModel):
@@ -52,6 +53,9 @@ class StaticUpstream(BaseModel):
     protocol_mode: ProtocolMode = "auto"
     """Protocol era the proxy speaks to this upstream. ``auto`` probes ``server/discover``
     per backend connection; pin ``2026-07-28`` for known-modern stateless upstreams."""
+    session_mode: Literal["shared", "per_request"] = "per_request"
+    """``shared`` reuses one connected client (only honoured with ``protocol_mode``
+    ``2026-07-28`` on http; see upstreams/proxy.py)."""
 
 
 #: Ids match ``local/seed/upstreams.json`` so the seeded toolsets (``sample-public_*``)
@@ -118,8 +122,32 @@ class Settings(BaseSettings):
     """Fallback poll of ``meta.version`` when the change stream misses or is unavailable."""
     policy_debounce_ms: int = Field(default=250, ge=0, le=10_000)
     """Change-stream events arriving within this window trigger one reload."""
+    # -- upstreams (WP4; see upstreams/ and docs/adr/0009-upstream-timeouts.md) ----------
+    upstreams_source: UpstreamsSource = "mongo"
+    """Where the upstream list comes from: the ``upstreams`` collection (``mongo``) or
+    ``GATEWAY_STATIC_UPSTREAMS`` (``static``; no Mongo needed, reloads leave the static
+    mounts alone). With ``mongo`` and ``GATEWAY_POLICY_SOURCE=mongo`` the upstreams come
+    from the policy snapshot, so the watcher mounts/unmounts them live; with a static
+    policy the standalone Mongo loader (``upstreams/source.py``) is used at startup and
+    on ``POST /internal/upstreams/reload``."""
+    mongo_server_selection_timeout_ms: int = Field(default=5000, ge=100, le=120_000)
+    """How long the Mongo loader waits for a reachable server before giving up."""
 
     upstream_secrets_dir: str = "/etc/gateway/upstream-secrets"
+    """``auth.secretRef`` resolves to the contents of ``<dir>/<secretRef>`` (a Kubernetes
+    Secret volume); ``GATEWAY_UPSTREAM_SECRET_<REF>`` is the local-dev fallback."""
+
+    upstream_probe_sec: float = Field(default=30.0, ge=0.2, le=3600)
+    """Interval of the background health probe (``tools/list`` per upstream)."""
+    upstream_probe_timeout_sec: float = Field(default=5.0, gt=0, le=600)
+    """Per-upstream deadline of one probe (connect + negotiate + ``tools/list``)."""
+
+    ready_requires_upstream: bool = True
+    """``/readyz`` fails until at least one enabled upstream is mounted. A dead upstream
+    that is mounted does not flip readiness."""
+
+    internal_token: str | None = None
+    """Shared secret for ``/internal/*`` (``X-Internal-Token``). Unset = routes answer 404."""
 
     static_upstreams: Annotated[list[StaticUpstream], NoDecode] = Field(
         default_factory=lambda: list(DEFAULT_STATIC_UPSTREAMS)
@@ -192,6 +220,14 @@ class Settings(BaseSettings):
     def _no_trailing_slash(cls, v: str, info: ValidationInfo) -> str:
         return v.rstrip("/") if info.field_name == "public_base_url" else v
 
+    @field_validator("internal_token", mode="before")
+    @classmethod
+    def _empty_token_is_none(cls, v: object) -> object:
+        if isinstance(v, str):
+            v = v.strip()
+            return v or None
+        return v
+
     @model_validator(mode="after")
     def _prod_guards(self) -> Settings:
         if self.env != "prod":
@@ -199,6 +235,8 @@ class Settings(BaseSettings):
         problems: list[str] = []
         if any(u.transport == "stdio" for u in self.static_upstreams):
             problems.append("stdio upstreams are not allowed when GATEWAY_ENV=prod")
+        # Mongo-sourced stdio upstreams cannot be known here; UpstreamRegistry.apply()
+        # refuses them at mount time (logged error + metric, never a crash).
         if not self.public_base_url.startswith("https://"):
             problems.append("GATEWAY_PUBLIC_BASE_URL must be https:// in prod")
         if not self.host_origin_protection:

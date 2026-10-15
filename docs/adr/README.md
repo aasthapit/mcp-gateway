@@ -15,4 +15,5 @@ the local stack), the result, and what the gateway does about it.
 | [0006](0006-server-discover.md)                      | What `server/discover` returns (e)                       |
 | [0007](0007-jwt-verification.md)                     | JWT verification on `JWTVerifier`; RFC 9728 metadata     |
 | [0008](0008-policy-reload.md)                        | Policy hot reload: change stream + version poll (WP3)    |
+| [0009](0009-upstream-timeouts.md)                    | Upstream timeouts, shared sessions, live mount/unmount   |
 | [0010](0010-openshift-packaging.md)                  | OpenShift packaging: Helm via Argo CD, Routes, Percona  |

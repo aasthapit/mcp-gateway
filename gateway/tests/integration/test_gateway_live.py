@@ -35,7 +35,14 @@ def stack_available() -> None:
 
 @pytest.fixture(scope="module")
 def base_url(stack_available: None) -> Iterator[str]:
-    settings = Settings(metrics_port=0, log_json=False, log_level="WARNING", policy_source="static")
+    settings = Settings(
+        metrics_port=0,
+        log_json=False,
+        log_level="WARNING",
+        policy_source="static",  # allow-all; the Mongo policy path is test_policy_live.py
+        upstreams_source="static",  # WP1 behaviour; the Mongo path is test_upstreams_live.py
+        upstream_probe_sec=1,
+    )
     gw = build_gateway(settings)
     port = free_port()
     server = uvicorn.Server(
@@ -100,7 +107,13 @@ def test_health_metrics_and_metadata(base_url: str) -> None:
         'gateway_tool_calls_total{outcome="ok",principal_kind="anonymous",tool="sample-public_echo",upstream="sample-public"}'
         in text
     )
+    for _ in range(50):  # the first probe runs right after startup; give it a moment
+        if 'gateway_upstream_up{upstream="sample-private"} 1.0' in text:
+            break
+        time.sleep(0.1)
+        text = httpx.get(base_url + "/metrics").text
     assert 'gateway_upstream_up{upstream="sample-private"} 1.0' in text
+    assert "gateway_upstreams_mounted 2.0" in text
     assert (
         httpx.get(base_url + "/.well-known/oauth-protected-resource")
         .json()["resource"]

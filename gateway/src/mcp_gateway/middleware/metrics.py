@@ -75,7 +75,25 @@ CHANGE_STREAM_UP = Gauge(
     "gateway_change_stream_up", "1 while the MongoDB policy change stream is open."
 )
 UPSTREAM_UP = Gauge(
-    "gateway_upstream_up", "1 when the upstream is considered healthy.", ["upstream"]
+    "gateway_upstream_up",
+    "1 when the last probe of the upstream succeeded, 0 when it failed or the upstream "
+    "is degraded (configured but not mounted).",
+    ["upstream"],
+)
+UPSTREAM_PROBE_SECONDS = Histogram(
+    "gateway_upstream_probe_seconds",
+    "Duration of one health probe (connect + tools/list) per upstream.",
+    ["upstream"],
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
+)
+UPSTREAM_ERRORS = Counter(
+    "gateway_upstream_errors_total",
+    "Upstream problems seen by the registry, by kind (probe_failed, secret_missing, "
+    "stdio_forbidden, build_failed, invalid_config, mount_failed, load_failed).",
+    ["upstream", "kind"],
+)
+UPSTREAMS_MOUNTED = Gauge(
+    "gateway_upstreams_mounted", "Number of upstreams currently mounted on the gateway."
 )
 BUILD_INFO = Gauge("gateway_build_info", "Gateway build information.", ["version"])
 BUILD_INFO.labels(version=__version__).set(1)
