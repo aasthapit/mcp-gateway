@@ -8,8 +8,21 @@
   "roles": {
     "realm": [
       { "name": "mcp-developer", "description": "May use the engineering toolsets through the gateway" },
-      { "name": "mcp-admin", "description": "May edit policy through the admin API/UI" }
-    ]
+      {
+        "name": "mcp-admin",
+        "description": "May edit policy through the admin API/UI. Composite: carries the client role mcp-admin/policy-admin, which makes Keycloak add aud=mcp-admin (audience resolve).",
+        "composite": true,
+        "composites": { "client": { "mcp-admin": ["policy-admin"] } }
+      }
+    ],
+    "client": {
+      "mcp-admin": [
+        {
+          "name": "policy-admin",
+          "description": "Holders get aud=mcp-admin in their access tokens (audience resolve). Granted only through the realm role mcp-admin, so dev1 never gets it."
+        }
+      ]
+    }
   },
   "clients": [
     {
@@ -104,6 +117,54 @@
             "access.token.claim": "true",
             "introspection.token.claim": "true",
             "lightweight.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "mcp-admin",
+      "name": "MCP admin API (resource server)",
+      "description": "Audience of the admin API. No login flows: tokens issued to mcp-admin-ui (or any client) carry aud=mcp-admin only when the user has the client role mcp-admin/policy-admin (via the realm role mcp-admin).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "mcp-admin-unused-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "redirectUris": []
+    },
+    {
+      "clientId": "mcp-admin-ui",
+      "name": "MCP admin UI",
+      "description": "Public client of the admin UI (authorization code + PKCE S256). Direct access grants are enabled for the local smoke and integration tests only (make token-admin).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "rootUrl": "http://localhost:3000",
+      "redirectUris": ["http://localhost:3000/*", "http://127.0.0.1:3000/*"],
+      "webOrigins": ["http://localhost:3000", "http://127.0.0.1:3000"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/*##http://127.0.0.1:3000/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-resolve",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-resolve-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
           }
         }
       ]
