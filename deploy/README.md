@@ -50,11 +50,16 @@ helm upgrade --install mcp-gateway deploy/helm/mcp-gateway -n mcp-gateway \
   --set secrets.values.internalToken="$(openssl rand -hex 24)"
 
 helm upgrade --install mcp-admin deploy/helm/mcp-admin -n mcp-gateway \
-  -f deploy/helm/mcp-admin/values-dev.yaml --set route.host=mcp-admin-dev.apps.<cluster-domain>
+  -f deploy/helm/mcp-admin/values-dev.yaml --set route.host=mcp-admin-dev.apps.<cluster-domain> \
+  --set api.env.ADMIN_OIDC_ISSUER=https://<idp>/realms/mcp --set ui.env.ADMIN_UI_OIDC_AUTHORITY=https://<idp>/realms/mcp \
+  --set secrets.values.mongoUri='mongodb://admin-api:<pw>@mcp-mongo-rs0.mcp-gateway.svc.cluster.local:27017/mcp_gateway?replicaSet=rs0&tls=true&tlsCAFile=/etc/admin/mongo-ca/ca.crt'
 ```
 
 Release names matter: `mcp-gateway` and `mcp-admin` make the Service names match what the
-admin chart's `GATEWAY_INTERNAL_URL` and the NetworkPolicy selectors expect.
+admin chart's `ADMIN_GATEWAY_INTERNAL_URL`, its `internalToken.secretName` (`mcp-gateway-env`)
+and the NetworkPolicy selectors expect. The IdP needs a public PKCE client `mcp-admin-ui`
+(redirect `https://<admin host>/*`) and tokens with `aud=mcp-admin` for admins (see
+`local/keycloak/realm.json`: client role `mcp-admin/policy-admin`, composite of the realm role).
 
 Check:
 
@@ -140,7 +145,8 @@ Vault / cloud secret manager ──(ClusterSecretStore vault-backend)──▶ E
   mcp-gateway/mongo      uri          ─▶ <release>-env        GATEWAY_MONGO_URI        envFrom
   mcp-gateway/internal   token        ─▶ <release>-env        GATEWAY_INTERNAL_TOKEN   envFrom
   mcp-gateway/upstreams  *            ─▶ <release>-upstreams  one file per key          /etc/gateway/upstream-secrets
-  mcp-admin/mongo        uri          ─▶ <release>-api-env    MONGO_URI                envFrom (admin chart)
+  mcp-admin/mongo        uri          ─▶ <release>-api-env    ADMIN_MONGO_URI          envFrom (admin chart)
+  (gateway's Secret)     GATEWAY_INTERNAL_TOKEN ─▶ mcp-gateway-env ─▶ ADMIN_GATEWAY_INTERNAL_TOKEN  secretKeyRef (admin chart)
   mcp-gateway/mongo-users ...         ─▶ mcp-mongo-app-users  Percona spec.users passwords
   mcp-gateway/mongo-backup ...        ─▶ mcp-mongo-backup-s3  PBM object-storage credentials
 ```

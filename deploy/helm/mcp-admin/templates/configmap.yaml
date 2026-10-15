@@ -13,6 +13,9 @@ data:
   {{- range $k, $v := $c.env }}
   {{ $k }}: {{ toString $v | quote }}
   {{- end }}
+  {{- if and (eq $component "api") (not (hasKey $c.env "ADMIN_CORS_ORIGINS")) $.Values.route.host }}
+  ADMIN_CORS_ORIGINS: {{ printf "https://%s" $.Values.route.host | quote }}
+  {{- end }}
 ---
 {{- end }}
 {{- end }}

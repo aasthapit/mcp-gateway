@@ -24,14 +24,16 @@ model, work packages and open decisions. Research notes live in [docs/research](
 ## Local development
 
 Prerequisites: [Podman](https://podman.io) (`brew install podman podman-compose docker-compose`,
-then `podman machine init && podman machine start`) **or** Docker; Python 3.12+; `uv`.
+then `podman machine init && podman machine start`) **or** Docker; Python 3.12+; `uv`;
+Node 22+ for the admin API/UI.
 
 ```bash
 make up          # build + start Mongo (rs0), Keycloak, sample upstreams; apply validators
 make seed        # load local/seed/*.json and bump meta.version
 make token       # dev1 access token (KC_USER=admin1 for admin1) (aud=mcp-gateway, realm_access.roles ∋ mcp-developer)
 make decode      # pretty-print its claims
-make smoke       # infra checks; gateway client checks arrive with WP1
+make smoke       # infra, gateway (guest/dev1/live allow-list edit) and admin-API checks
+make admin-dev   # admin UI http://localhost:3000 (admin1/admin1) + API :3001 + gateway :8080
 make down        # stop (make clean also drops volumes)
 ```
 

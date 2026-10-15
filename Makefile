@@ -19,7 +19,8 @@ KC      := http://localhost:$(KC_PORT)/realms/mcp
 KC_USER ?= dev1
 KC_PASS ?= $(KC_USER)
 
-.PHONY: help env up down logs ps restart seed validators validate-seed token token-ci decode mongosh smoke lint fmt pre-commit clean \
+.PHONY: help env up down logs ps restart seed validators validate-seed token token-ci token-admin decode mongosh smoke lint fmt pre-commit clean \
+	admin-deps admin-dev admin-up admin-down admin-test admin-smoke keycloak-sync \
 	traces loadtest drills \
 	deploy-check deploy-lint deploy-template deploy-kubeconform deploy-policy deploy-schemas deploy-image
 
@@ -36,7 +37,11 @@ up: env validators ## build + start the stack, initiate the replica set, apply v
 	@printf 'waiting for keycloak realm import'; for i in $$(seq 1 60); do \
 	  curl -fs -o /dev/null $(KC)/.well-known/openid-configuration && break; printf '.'; sleep 2; done; echo
 	@curl -fsS -o /dev/null $(KC)/.well-known/openid-configuration || { echo "keycloak not ready at $(KC); see: make logs SVC=keycloak"; exit 1; }
+	@$(MAKE) -s keycloak-sync
 	@echo "stack up: mongo :27017, keycloak :$(KC_PORT), sample-public :8081, sample-private :8082"
+
+keycloak-sync: ## add the WP5 admin clients to an already-imported realm (idempotent; run by make up)
+	@KEYCLOAK_PORT=$(KC_PORT) $(PY) $(LOCAL)/keycloak/sync-admin-clients.py
 
 down: ## stop and remove containers (keeps volumes)
 	$(CF) down --remove-orphans
@@ -68,6 +73,10 @@ token: ## print an access token for KC_USER (default dev1) via the password gran
 	@curl -fsS -d client_id=mcp-gateway -d grant_type=password -d username=$(KC_USER) -d password=$(KC_PASS) \
 	  $(KC)/protocol/openid-connect/token | $(PY) -c 'import sys,json; print(json.load(sys.stdin)["access_token"])'
 
+token-admin: ## print an admin-API token for admin1 (client mcp-admin-ui, aud=mcp-admin)
+	@curl -fsS -d client_id=mcp-admin-ui -d grant_type=password -d username=admin1 -d password=admin1 \
+	  $(KC)/protocol/openid-connect/token | $(PY) -c 'import sys,json; print(json.load(sys.stdin)["access_token"])'
+
 token-ci: ## print a client-credentials token for ci-runner
 	@curl -fsS -d client_id=ci-runner -d client_secret=ci-runner-secret -d grant_type=client_credentials \
 	  $(KC)/protocol/openid-connect/token | $(PY) -c 'import sys,json; print(json.load(sys.stdin)["access_token"])'
@@ -76,10 +85,35 @@ decode: ## decode the claims of a token: make decode TOKEN=... (defaults to `mak
 	@tok="$(TOKEN)"; [ -n "$$tok" ] || tok=$$($(MAKE) -s token); \
 	$(PY) -c 'import sys,base64,json; p=sys.argv[1].split(".")[1]; print(json.dumps(json.loads(base64.urlsafe_b64decode(p+"="*(-len(p)%4))), indent=2))' "$$tok"
 
-smoke: env ## end-to-end checks: infra, then guest + garbage-bearer + dev1 MCP clients, a live toolset edit and /internal/catalog through the gateway (GATEWAY_URL=... and GATEWAY_INTERNAL_TOKEN=... to test a running one)
+smoke: env ## end-to-end checks: infra, then guest + garbage-bearer + dev1 MCP clients, a live toolset edit and /internal/catalog through the gateway, then the admin API (GATEWAY_URL=... and GATEWAY_INTERNAL_TOKEN=... to test a running one)
 	COMPOSE="$(COMPOSE)" $(LOCAL)/smoke.sh
 	@echo "gateway (guest, garbage bearer, Mongo policy, live allow-list change, /internal/catalog, dev1 client)"
 	@tok=$$($(MAKE) -s token KC_USER=dev1) && cd gateway && GATEWAY_SMOKE_TOKEN="$$tok" uv run --frozen python -m mcp_gateway.smoke $(GATEWAY_URL)
+	@$(MAKE) -s admin-smoke
+
+# ---------------------------------------------------------------------------------------
+# admin-api / admin-ui (WP5). See admin-api/README.md and admin-ui/README.md.
+# ---------------------------------------------------------------------------------------
+admin-deps: ## npm ci for admin-api and admin-ui when node_modules is missing
+	@for d in admin-api admin-ui; do [ -d $$d/node_modules ] || (cd $$d && npm ci --no-audit --no-fund) || exit 1; done
+
+admin-dev: env admin-deps ## admin API + UI on the host with hot reload (+ the gateway on :8080 unless one runs); UI http://localhost:3000
+	$(LOCAL)/admin-dev.sh
+
+admin-up: env ## admin API + UI as containers (compose profile admin; the gateway runs on the host)
+	$(CF) --profile admin up -d --build admin-api admin-ui
+	@echo "admin UI http://localhost:$${ADMIN_UI_PORT:-3000}, API http://localhost:$${ADMIN_API_PORT:-3001}"
+
+admin-down: ## stop the admin containers
+	$(CF) --profile admin rm -sf admin-api admin-ui
+
+admin-test: admin-deps ## typecheck + vitest for admin-api (live suites skip without the stack) and admin-ui
+	cd admin-api && npm run --silent typecheck && npm test
+	cd admin-ui && npm run --silent typecheck && npm test
+
+admin-smoke: env admin-deps ## admin1 token -> PUT toolset via the admin API -> guest tools/list changes -> revert
+	@echo "admin-api (admin1 token, toolset edit through the API, guest tools/list, preview, history)"
+	@set -a; . $(ENVFILE); set +a; cd admin-api && GATEWAY_URL="$(GATEWAY_URL)" GATEWAY_INTERNAL_TOKEN="$(if $(GATEWAY_URL),$(GATEWAY_INTERNAL_TOKEN))" npm run --silent smoke
 
 lint: ## ruff + prettier + schema check via pre-commit
 	$(PRE_COMMIT) run --all-files --show-diff-on-failure

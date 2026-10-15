@@ -40,6 +40,26 @@ jobs:
       - name: validators.js parses
         run: node --check local/mongo-init/validators.js
 
+  admin:
+    name: admin-api + admin-ui (typecheck, vitest, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            admin-api/package-lock.json
+            admin-ui/package-lock.json
+      - name: admin-api
+        working-directory: admin-api
+        # The live suites (Mongo/Keycloak/gateway) skip themselves without the local stack.
+        run: npm ci && npm run typecheck && npm test && npm run build
+      - name: admin-ui
+        working-directory: admin-ui
+        run: npm ci && npm test && npm run build
+
   compose:
     name: compose config
     runs-on: ubuntu-latest

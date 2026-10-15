@@ -4,4 +4,4 @@ UI:  https://{{ default "<router-generated>" .Values.route.host }}/
 API: https://{{ default "<router-generated>" .Values.route.host }}{{ .Values.route.apiPath }}
 {{- end }}
 Images: api {{ include "mcp-admin.image" (dict "ctx" . "image" .Values.api.image) }}, ui {{ include "mcp-admin.image" (dict "ctx" . "image" .Values.ui.image) }}
-WP5: set api.image/ui.image and api.env (deploy/helm/mcp-admin/values.yaml); secrets flow is in deploy/README.md.
+Secrets: ADMIN_MONGO_URI from {{ include "mcp-admin.envSecretName" . }}; the gateway internal token from Secret {{ .Values.internalToken.secretName }} (key {{ .Values.internalToken.key }}), shared with the mcp-gateway release.

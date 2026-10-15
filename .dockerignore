@@ -1,0 +1,10 @@
+# Build context for the admin images is the repo root (they need schemas/); send only what
+# they COPY. The gateway and sample-upstreams images use their own directories as context.
+*
+!schemas/
+!admin-api/
+!admin-ui/
+**/node_modules
+**/dist
+**/coverage
+**/*.log

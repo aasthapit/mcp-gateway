@@ -2,10 +2,13 @@ api:
   image: { tag: "0.1.0", digest: "" }
   replicaCount: 2
   env:
-    OIDC_ISSUER: https://idp.example.com/realms/mcp
+    ADMIN_OIDC_ISSUER: https://idp.example.com/realms/mcp
 ui:
   image: { tag: "0.1.0", digest: "" }
   replicaCount: 2
+  env:
+    ADMIN_UI_OIDC_AUTHORITY: https://idp.example.com/realms/mcp
+    ADMIN_UI_GATEWAY_MCP_URL: https://mcp.example.com/mcp
 externalSecrets:
   enabled: true
 route:

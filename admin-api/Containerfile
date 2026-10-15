@@ -1,0 +1,46 @@
+# admin-api image. UBI 9 minimal Node.js 22, production deps from package-lock.json, runs as
+# the numeric non-root UID 1001 and works under OpenShift's restricted SCC (arbitrary UID,
+# group 0) with a read-only root filesystem (nothing is written; /tmp is an emptyDir).
+#
+# Build context is the REPO ROOT: the image carries ../schemas, which the API compiles into
+# its ajv validators at startup (the same files that generate the Mongo validators).
+#
+#   podman build -t mcp-admin-api:dev -f admin-api/Containerfile .
+#   podman run --rm -p 3001:3001 --read-only --tmpfs /tmp mcp-admin-api:dev
+
+ARG BASE=registry.access.redhat.com/ubi9/nodejs-22-minimal:latest
+
+# ---------------------------------------------------------------------------- build
+FROM ${BASE} AS build
+USER 0
+WORKDIR /opt/app-root/src/admin-api
+COPY admin-api/package.json admin-api/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY admin-api/tsconfig.json admin-api/tsconfig.build.json ./
+COPY admin-api/src ./src
+RUN npm run build && npm prune --omit=dev --no-audit --no-fund
+
+# ---------------------------------------------------------------------------- runtime
+FROM ${BASE}
+LABEL org.opencontainers.image.title="mcp-admin-api" \
+      org.opencontainers.image.description="Admin API for the MCP gateway policy" \
+      org.opencontainers.image.source="https://github.com/aasthapit/mcp-gateway"
+USER 0
+WORKDIR /opt/app-root/src
+COPY schemas/*.schema.json ./schemas/
+COPY --from=build /opt/app-root/src/admin-api/package.json ./admin-api/
+COPY --from=build /opt/app-root/src/admin-api/node_modules ./admin-api/node_modules
+COPY --from=build /opt/app-root/src/admin-api/dist ./admin-api/dist
+RUN chgrp -R 0 /opt/app-root/src && chmod -R g=u,o-w /opt/app-root/src
+ENV NODE_ENV=production \
+    HOME=/tmp \
+    TMPDIR=/tmp \
+    ADMIN_HOST=0.0.0.0 \
+    ADMIN_PORT=3001 \
+    ADMIN_SCHEMAS_DIR=/opt/app-root/src/schemas
+WORKDIR /opt/app-root/src/admin-api
+USER 1001
+EXPOSE 3001
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3001/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+CMD ["node", "--enable-source-maps", "dist/server.js"]

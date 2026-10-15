@@ -224,29 +224,70 @@ services:
   #     - ../gateway/src:/opt/app-root/src/src:ro   # hot reload in dev
 
   # ---------------------------------------------------------------------------
-  # WP5: admin API + UI. Uncomment once admin-api/ and admin-ui/ have Containerfiles.
+  # WP5: admin API + UI as containers (profile `admin`: `make admin-up`). For day-to-day
+  # work `make admin-dev` runs both on the host with hot reload instead (same ports, so
+  # use one or the other). The gateway runs on the host (`uv run mcp-gateway`), reached
+  # from the containers as host.containers.internal; both sides share
+  # GATEWAY_INTERNAL_TOKEN from local/.env. Build context is the repo root (schemas/).
   # ---------------------------------------------------------------------------
-  # admin-api:
-  #   build: ../admin-api
-  #   container_name: mcp-admin-api
-  #   depends_on:
-  #     mongo-init:
-  #       condition: service_completed_successfully
-  #   environment:
-  #     MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-root}:${MONGO_ROOT_PASSWORD:-devpass}@mongo:27017/?replicaSet=rs0&directConnection=true
-  #     MONGO_DB: ${MONGO_DB:-mcp_gateway}
-  #     OIDC_ISSUER: ${KC_HOSTNAME:-http://localhost:8180}/realms/mcp
-  #     JWKS_URL: http://keycloak:8080/realms/mcp/protocol/openid-connect/certs
-  #     GATEWAY_INTERNAL_URL: http://gateway:8080/internal
-  #   ports:
-  #     - "${ADMIN_API_PORT:-3001}:3001"
-  #
-  # admin-ui:
-  #   build: ../admin-ui
-  #   container_name: mcp-admin-ui
-  #   depends_on: [admin-api]
-  #   ports:
-  #     - "${ADMIN_UI_PORT:-3000}:3000"
+  admin-api:
+    profiles: ["admin"]
+    build:
+      context: ..
+      dockerfile: admin-api/Containerfile
+    image: localhost/mcp-admin-api:dev
+    container_name: mcp-admin-api
+    restart: unless-stopped
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    environment:
+      ADMIN_ENV: dev
+      ADMIN_MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-root}:${MONGO_ROOT_PASSWORD:-devpass}@mongo:27017/?replicaSet=rs0&directConnection=true
+      ADMIN_MONGO_DB: ${MONGO_DB:-mcp_gateway}
+      # Tokens carry the host-visible issuer; keys are fetched over the compose network.
+      ADMIN_OIDC_ISSUER: ${KC_HOSTNAME:-http://localhost:8180}/realms/mcp
+      ADMIN_JWKS_URL: http://keycloak:8080/realms/mcp/protocol/openid-connect/certs
+      ADMIN_JWT_AUDIENCE: ${ADMIN_JWT_AUDIENCE:-mcp-admin}
+      ADMIN_REQUIRED_ROLE: ${ADMIN_REQUIRED_ROLE:-mcp-admin}
+      ADMIN_CORS_ORIGINS: http://localhost:${ADMIN_UI_PORT:-3000},http://127.0.0.1:${ADMIN_UI_PORT:-3000}
+      ADMIN_GATEWAY_INTERNAL_URL: ${ADMIN_GATEWAY_INTERNAL_URL_CONTAINER:-http://host.containers.internal:8080}
+      ADMIN_GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:-}
+      ADMIN_LOG_LEVEL: ${ADMIN_LOG_LEVEL:-info}
+    extra_hosts:
+      - "host.containers.internal:host-gateway"
+    ports:
+      - "${ADMIN_API_PORT:-3001}:3001"
+    user: "1001:0"
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  admin-ui:
+    profiles: ["admin"]
+    build:
+      context: ..
+      dockerfile: admin-ui/Containerfile
+    image: localhost/mcp-admin-ui:dev
+    container_name: mcp-admin-ui
+    restart: unless-stopped
+    depends_on: [admin-api]
+    environment:
+      # The browser calls these, so they are host-visible URLs.
+      ADMIN_UI_API_BASE_URL: http://localhost:${ADMIN_API_PORT:-3001}
+      ADMIN_UI_OIDC_AUTHORITY: ${KC_HOSTNAME:-http://localhost:8180}/realms/mcp
+      ADMIN_UI_OIDC_CLIENT_ID: mcp-admin-ui
+      ADMIN_UI_GATEWAY_MCP_URL: http://localhost:${GATEWAY_PORT:-8080}/mcp
+    ports:
+      # Keycloak's mcp-admin-ui client only redirects to port 3000.
+      - "${ADMIN_UI_PORT:-3000}:3000"
+    user: "1001:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
 
 volumes:
   mongo-data:

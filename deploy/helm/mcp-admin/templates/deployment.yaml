@@ -61,9 +61,19 @@ spec:
             - secretRef:
                 name: {{ include "mcp-admin.envSecretName" $ }}
             {{- end }}
-          {{- with $c.extraEnv }}
+          {{- if or $c.extraEnv (eq $component "api") }}
           env:
+            {{- if eq $component "api" }}
+            # Same Secret the gateway reads GATEWAY_INTERNAL_TOKEN from (values: internalToken).
+            - name: ADMIN_GATEWAY_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.internalToken.secretName }}
+                  key: {{ $.Values.internalToken.key }}
+            {{- end }}
+            {{- with $c.extraEnv }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           startupProbe:
             httpGet: { path: {{ $c.probes.livenessPath }}, port: http }
