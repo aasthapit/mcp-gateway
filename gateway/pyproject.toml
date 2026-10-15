@@ -38,7 +38,10 @@ packages = ["src/mcp_gateway"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-markers = ["integration: needs the local stack (make up)"]
+markers = [
+    "integration: needs the local stack (make up)",
+    "drill: failure drill against the local stack; skipped unless GATEWAY_DRILLS=1 (make drills)",
+]
 
 [tool.ruff]
 extend = "../ruff.toml"

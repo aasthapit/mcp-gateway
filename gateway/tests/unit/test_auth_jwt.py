@@ -151,8 +151,12 @@ async def test_jwks_outage_keeps_known_keys_and_backs_off(idp: FakeIdp) -> None:
     await v.verify(idp.token("k1"))
     idp.jwks_status = 503
     v._jwks_cache_time -= v._cache_ttl + 1  # make the cache stale
-    await v.verify(idp.token("k1"))  # stale key still accepted while the IdP is down
+    await v.verify(idp.token("k1"))  # stale key accepted at once while the IdP is down
+    assert v._background_refresh is not None
+    await v._background_refresh  # the revalidation runs (and fails) in the background
     assert idp.jwks_fetches == 2
+    await v.verify(idp.token("k1"))  # backed off: no second background fetch
+    assert v._background_refresh.done() and idp.jwks_fetches == 2
     idp.add_key("k2")
     assert await reason(v, idp.token("k2")) == "unknown_kid"  # backed off, no fetch
     assert idp.jwks_fetches == 2
@@ -255,3 +259,14 @@ async def test_known_kid_does_not_queue_behind_a_hanging_refresh(idp: FakeIdp) -
     assert 0.4 < result["unknown_sec"] < 2.0  # waited for the fetch timeout, not 10 s
     assert idp.jwks_fetches == 2
     assert result["known_sec"] < 0.4  # served from the stale cache while the fetch hung
+
+
+async def test_known_kid_is_revalidated_in_background(idp: FakeIdp) -> None:
+    v = make_verifier(idp, jwks_refresh_floor_sec=0)
+    await v.verify(idp.token("k1"))
+    v._jwks_cache_time -= v._cache_ttl + 1
+    idp.add_key("k2")
+    await v.verify(idp.token("k1"))  # stale hit, refresh scheduled
+    await v._background_refresh
+    assert idp.jwks_fetches == 2
+    assert v._cached_key("k2", allow_stale=False) is not None  # set refreshed

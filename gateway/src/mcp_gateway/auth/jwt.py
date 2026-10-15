@@ -10,14 +10,18 @@ docs/adr/0007-jwt-verification.md:
 * ``exp``/``nbf`` with a small clock skew, required ``exp``,
 * ``iss``/``aud`` checks with a typed rejection reason for logs and metrics,
 * unknown-``kid`` refresh with a 5 min floor on *successful* refreshes, a short backoff
-  after failed fetches, and a stale-cache grace so an IdP outage never logs callers out
-  whose key we already hold,
+  after failed fetches, and stale-while-revalidate for known keys: once the 1 h cache
+  expires, a token whose ``kid`` we hold is verified with the cached key at once while
+  one background task refreshes the set, so an IdP outage (refused or blackholed) never
+  delays or logs out callers whose key we already have; an unknown ``kid`` waits for at
+  most one fetch bounded by ``GATEWAY_JWKS_FETCH_TIMEOUT_SEC``,
 * JWKS URI discovery from ``<issuer>/.well-known/openid-configuration`` at startup with
   an explicit ``GATEWAY_JWKS_URI`` override.
 """
 
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 from dataclasses import dataclass
@@ -93,6 +97,7 @@ class GatewayJWTVerifier(JWTVerifier):
         self._registry = JWSRegistry(algorithms=self.algorithms, strict_check_header=False)
         self._last_refresh_ok: float | None = None
         self._last_refresh_failed: float | None = None
+        self._background_refresh: asyncio.Task[None] | None = None
         self.jwks_fetches = 0  # observability / tests
 
     # -- JWKS cache policy ---------------------------------------------------------------
@@ -118,12 +123,10 @@ class GatewayJWTVerifier(JWTVerifier):
         """
         if (key := self._cached_key(kid, allow_stale=False)) is not None:
             return key
-        if (
-            self._jwks_refresh_lock.locked()
-            and (stale := self._cached_key(kid, allow_stale=True)) is not None
-        ):
-            # Another request is refreshing (maybe against an unreachable IdP): a known
-            # key keeps verifying instead of queueing behind that fetch.
+        if (stale := self._cached_key(kid, allow_stale=True)) is not None:
+            # Known key, expired cache: answer now and revalidate in the background, so a
+            # hanging or refusing IdP never delays requests we can already verify.
+            self._revalidate_in_background()
             return stale
         async with self._jwks_refresh_lock:
             if (key := self._cached_key(kid, allow_stale=False)) is not None:
@@ -163,6 +166,31 @@ class GatewayJWTVerifier(JWTVerifier):
                 raise TokenInvalid("jwks_unavailable", str(exc)) from exc
             finally:
                 if self._jwks_cache_time != cache_time_before:
+                    self._last_refresh_ok = time.monotonic()
+
+    def _revalidate_in_background(self) -> None:
+        task = self._background_refresh
+        if (task is not None and not task.done()) or self._jwks_refresh_lock.locked():
+            return
+        if self._last_refresh_failed is not None and (
+            time.monotonic() - self._last_refresh_failed < JWKS_FAILURE_BACKOFF_SEC
+        ):
+            return
+        self._background_refresh = asyncio.create_task(self._revalidate(), name="jwks-revalidate")
+
+    async def _revalidate(self) -> None:
+        async with self._jwks_refresh_lock:
+            before = self._jwks_cache_time
+            self.jwks_fetches += 1
+            try:
+                await self._refresh_jwks_key(None)
+            except Exception as exc:
+                # ValueError after a successful fetch only means "several keys, no kid"
+                if self._jwks_cache_time == before:
+                    self._last_refresh_failed = time.monotonic()
+                    log.warning("jwks revalidation failed", jwks_uri=self.jwks_uri, error=str(exc))
+            finally:
+                if self._jwks_cache_time != before:
                     self._last_refresh_ok = time.monotonic()
 
     async def _fetch_jwks(self) -> dict[str, Any]:

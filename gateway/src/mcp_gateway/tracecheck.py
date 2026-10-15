@@ -149,10 +149,7 @@ def main() -> int:
             any(a.startswith(name + ":") for a in attrs) for name in EXPECTED_ATTRS
         ):
             server_ok = True
-    print(
-        f"  {'ok' if server_ok else 'FAIL'}  SERVER span carries "
-        + ", ".join(EXPECTED_ATTRS)
-    )
+    print(f"  {'ok' if server_ok else 'FAIL'}  SERVER span carries " + ", ".join(EXPECTED_ATTRS))
     return 0 if (ok_call and server_ok) else 1
 
 
