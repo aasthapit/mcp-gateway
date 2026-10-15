@@ -98,3 +98,38 @@ async def test_resources_and_prompts_hidden() -> None:
             await c.read_resource("data://pub/info")
         with pytest.raises(Exception, match=r"(?i)not found|unknown prompt"):
             await c.get_prompt("pub_hello")
+
+
+async def test_real_snapshot_through_middleware() -> None:
+    """A Mongo-shaped policy (toolsets + grants) drives list and call decisions."""
+    from mcp_gateway.policy.snapshot import build_snapshot
+
+    snap, _ = build_snapshot(
+        version=9,
+        toolsets=[
+            {"_id": "guest", "enabled": True, "allow": ["pub_echo"]},
+            {"_id": "all", "enabled": True, "allow": ["pub_*"], "deny": ["pub_echo"]},
+        ],
+        grants=[
+            {
+                "_id": "anon",
+                "enabled": True,
+                "subject": {"kind": "anonymous"},
+                "toolsets": ["guest"],
+            },
+            {
+                "_id": "admins",
+                "enabled": True,
+                "subject": {"kind": "claim", "path": "roles", "op": "contains", "value": "admin"},
+                "toolsets": ["all"],
+            },
+        ],
+    )
+    async with Client(make_server(snap, ANONYMOUS)) as c:
+        assert [t.name for t in await c.list_tools()] == ["pub_echo"]
+    admin = Principal("user", sub="a", claims={"roles": ["admin"]})
+    async with Client(make_server(snap, admin)) as c:
+        # deny of pub_echo in the admin toolset wins over the guest floor's allow
+        assert [t.name for t in await c.list_tools()] == ["pub_secret"]
+        with pytest.raises(Exception, match="Unknown tool: 'pub_echo'"):
+            await c.call_tool("pub_echo", {"text": "x"})

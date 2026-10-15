@@ -12,6 +12,9 @@ from fastmcp import FastMCP
 
 from mcp_gateway.auth.principal import current_principal
 
+#: Names of the dev-only tools; the policy middleware exempts them from the allow-list.
+DEBUG_TOOL_NAMES: frozenset[str] = frozenset({"gateway_whoami"})
+
 
 def register_debug_tools(mcp: FastMCP) -> None:
     @mcp.tool(name="gateway_whoami", description="DEV ONLY: the principal the gateway resolved")

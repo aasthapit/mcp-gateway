@@ -1,12 +1,18 @@
-"""Per-request tool visibility and call authorisation.
+"""Per-request tool visibility and call authorisation (docs/PLAN.md 3.1 step 3).
 
-WP1 behaviour: read the principal (anonymous unless WP2's auth layer set one), ask the
-current snapshot for the principal's :class:`ToolFilter`, filter ``tools/list`` and block
-``tools/call`` for anything not allowed, and hide resources and prompts entirely (v1
-exposes tools only). WP3 swaps the snapshot provider for the live Mongo-backed one; this
-file should not need to change for that.
+Reads the principal (``request.state.principal`` / ``principal_var`` set by WP2's auth
+layer; anonymous when absent), asks the current snapshot (``PolicyHolder.get`` wired in
+``app.py``) for the principal's :class:`ToolFilter`, filters ``tools/list``, blocks
+``tools/call`` for anything not allowed, and hides resources and prompts entirely (v1
+exposes tools only).
 
-Denied calls answer exactly like unknown tools so existence is not leaked.
+A denied call answers *exactly* like an unknown tool: :class:`PolicyDenied` subclasses
+FastMCP's ``NotFoundError`` and carries the same ``Unknown tool: '<name>'`` message that
+FastMCP itself produces, so the wire error reveals nothing about whether the tool exists.
+(A distinct ``ToolError("Tool not found")`` would be distinguishable from the native
+unknown-tool error, which is the leak the requirement is about.) Denials count in
+``gateway_policy_denials_total{tool,principal_kind}`` and emit a ``tools.call.denied``
+audit line.
 """
 
 from __future__ import annotations
@@ -35,9 +41,13 @@ class PolicyMiddleware(Middleware):
         self,
         snapshot_provider: SnapshotProvider | None = None,
         principal_provider: Callable[[], Principal] | None = None,
+        exempt: frozenset[str] = frozenset(),
     ) -> None:
         self._snapshot: SnapshotProvider = snapshot_provider or _default_snapshot_provider()
         self._principal: Callable[[], Principal] = principal_provider or current_principal
+        #: Gateway-local tools that bypass the allow-list (dev-only diagnostics such as
+        #: ``gateway_whoami``). The Mongo policy governs proxied upstream tools only.
+        self._exempt = exempt
 
     # -- tools --------------------------------------------------------------------------
 
@@ -46,14 +56,16 @@ class PolicyMiddleware(Middleware):
     ) -> Sequence[Any]:
         tools = await call_next(context)
         allowed = self._snapshot().effective_tools(self._principal())
-        return [t for t in tools if allowed.allows(t.name)]
+        return [t for t in tools if t.name in self._exempt or allowed.allows(t.name)]
 
     async def on_call_tool(
         self, context: MiddlewareContext[Any], call_next: CallNext[Any, Any]
     ) -> Any:
         name = getattr(context.message, "name", "")
         principal = self._principal()
-        if not self._snapshot().effective_tools(principal).allows(name):
+        if name not in self._exempt and not self._snapshot().effective_tools(principal).allows(
+            name
+        ):
             POLICY_DENIALS.labels(name, principal.kind).inc()
             audit_event("tools.call.denied", principal=principal, tool=name, outcome="denied")
             raise PolicyDenied(f"Unknown tool: {name!r}")

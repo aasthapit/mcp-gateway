@@ -5,12 +5,13 @@ that proxies upstream MCP servers as namespaced tools and filters them per calle
 Design: [docs/PLAN.md](../docs/PLAN.md) (sections 3 to 5). Verified FastMCP behaviours:
 [docs/adr](../docs/adr/README.md).
 
-**State after WP2:** the two sample upstreams are mounted statically from settings;
-callers are anonymous or, with a valid `Authorization: Bearer <jwt>` from the configured
-OIDC issuer, users with `sub`/`client_id`/scopes/claims (ADR 0007). Every caller still
-sees every tool (allow-all policy) until WP3 lands the Mongo policy; resources and
-prompts are hidden. WP3 (Mongo policy + hot reload) and WP4 (Mongo-driven upstreams) plug
-into the interfaces in `policy/` and `upstreams/registry.py`.
+**State after WP2 + WP3:** the two sample upstreams are mounted statically from settings
+(ids `sample-public` / `sample-private`, matching `local/seed`; WP4 mounts upstreams from
+Mongo instead). Callers are anonymous or, with a valid `Authorization: Bearer <jwt>` from
+the configured OIDC issuer, users with `sub`/`client_id`/scopes/claims (ADR 0007). The
+per-caller allow-lists come from MongoDB and are hot-reloaded (change stream + poll, see
+[Policy](#policy-allow-lists-from-mongodb)); the guest floor is `public-basics` in the
+seed and `mcp-developer` users also get `engineering`. Resources and prompts are hidden.
 
 ## Run locally
 
@@ -29,8 +30,9 @@ GATEWAY_SMOKE_TOKEN=$(make -s -C .. token) uv run python -m mcp_gateway.smoke ht
 ```
 
 or from the repo root `make smoke` (infra checks, then guest, garbage-bearer and dev1
-clients through an in-process gateway; `make smoke GATEWAY_URL=http://localhost:8080`
-targets a running one).
+clients through an in-process gateway, including an allow-list edit in Mongo that must show
+up within 2 s; `make smoke GATEWAY_URL=http://localhost:8080` targets a running one).
+`make seed` first.
 
 Python client (a string `auth=` becomes `Authorization: Bearer ...`):
 
@@ -38,10 +40,11 @@ Python client (a string `auth=` becomes `Authorization: Bearer ...`):
 from fastmcp import Client
 
 async with Client("http://localhost:8080/mcp") as c:                  # guest
-    print([t.name for t in await c.list_tools()])   # public_time_now, public_echo, private_secret_lookup
-    print((await c.call_tool("public_echo", {"text": "hi"})).data)
+    print([t.name for t in await c.list_tools()])  # sample-public_time_now, sample-public_echo
+    print((await c.call_tool("sample-public_echo", {"text": "hi"})).data)
 
 async with Client("http://localhost:8080/mcp", auth=token) as c:      # dev1
+    print([t.name for t in await c.list_tools()])  # + the `engineering` toolset
     print((await c.call_tool("gateway_whoami", {})).data)             # dev only: the resolved principal
 ```
 
@@ -102,9 +105,12 @@ audit line carries `principal_kind`, `sub` and `client_id`.
 | `GATEWAY_JWKS_REFRESH_FLOOR_SEC`         | `300`                                       | Minimum gap between unknown-`kid` JWKS refreshes                                                                                                                                              |
 | `GATEWAY_OIDC_DISCOVERY_TIMEOUT_SEC`     | `5`                                         |                                                                                                                                                                                               |
 | `GATEWAY_SCOPES_SUPPORTED`               | `[]`                                        | Advertised in the RFC 9728 document (CSV or JSON)                                                                                                                                             |
-| `GATEWAY_MONGO_URI` / `GATEWAY_MONGO_DB` | local replica set / `mcp_gateway`           | Used from WP3 on                                                                                                                                                                              |
+| `GATEWAY_MONGO_URI` / `GATEWAY_MONGO_DB` | local replica set / `mcp_gateway`           | Policy store (and upstreams from WP4); needs a replica set (change streams)                                                                                                                    |
+| `GATEWAY_POLICY_SOURCE`                  | `mongo`                                     | `static` = allow-all, dev/test only (refused in prod)                                             |
+| `GATEWAY_POLICY_POLL_SEC`                | `30`                                        | Fallback poll of `meta.version` (covers missed events / tiers without change streams)             |
+| `GATEWAY_POLICY_DEBOUNCE_MS`             | `250`                                       | Change-stream events within this window cause one reload                                          |
 | `GATEWAY_UPSTREAM_SECRETS_DIR`           | `/etc/gateway/upstream-secrets`             | Used from WP4 on                                                                                                                                                                              |
-| `GATEWAY_STATIC_UPSTREAMS`               | public → `:8081/mcp`, private → `:8082/mcp` | WP1 only. JSON list of `{id, url, transport?, cache_ttl_sec?, protocol_mode?}`                                                                                                                |
+| `GATEWAY_STATIC_UPSTREAMS`               | `sample-public` → `:8081/mcp`, `sample-private` → `:8082/mcp` | Until WP4. JSON list of `{id, url, transport?, cache_ttl_sec?, protocol_mode?}`; `id` is the tool namespace and must match the ids the toolsets use |
 | `GATEWAY_TOOLS_LIST_TTL_SEC`             | `30`                                        | `ttlMs` cache hint on modern-era list results (ADR 0002)                                                                                                                                      |
 | `GATEWAY_LOG_LEVEL` / `GATEWAY_LOG_JSON` | `INFO` / `true`                             | JSON lines to stdout; `GATEWAY_LOG_JSON=false` for a console renderer                                                                                                                         |
 | `GATEWAY_TELEMETRY_MODE`                 | `off`                                       | Sets `FASTMCP_TELEMETRY_MODE` (`native` for OTel spans, WP7)                                                                                                                                  |
@@ -118,15 +124,63 @@ audit line carries `principal_kind`, `sub` and `client_id`.
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /mcp`                                 | MCP streamable HTTP, both protocol eras, stateless (no GET stream, no sessions)                                                                                                                    |
 | `GET /healthz`                              | process up                                                                                                                                                                                         |
-| `GET /readyz`                               | 503 until the lifespan finished and all critical readiness probes pass (`health.py`); the `oidc` probe reports the discovered JWKS URI (critical in prod only)                                     |
+| `GET /readyz`                               | 503 until the lifespan finished, a policy snapshot is loaded and all critical readiness probes pass (`health.py`); JSON reports `checks.policy` (version, `policy_age_seconds`, change stream state) and the `oidc` probe (critical in prod only) |
 | `GET /metrics`                              | Prometheus text; also on the metrics port                                                                                                                                                          |
 | `GET /.well-known/oauth-protected-resource` | RFC 9728 metadata: `resource`, `authorization_servers=[issuer]`, `bearer_methods_supported=["header"]`, `scopes_supported`; also served at `.../oauth-protected-resource/mcp` (path-suffixed form) |
 
 Metrics: `gateway_auth_results_total{result=anonymous|valid|invalid|disabled_anonymous}`,
 `gateway_requests_total{method,era,principal_kind,outcome}`,
 `gateway_request_duration_seconds`, `gateway_tool_calls_total{tool,upstream,principal_kind,outcome}`,
-`gateway_tool_call_duration_seconds`, `gateway_policy_denials_total`, `gateway_policy_version`,
-`gateway_policy_age_seconds`, `gateway_upstream_up{upstream}`, `gateway_build_info`.
+`gateway_tool_call_duration_seconds`, `gateway_policy_denials_total{tool,principal_kind}`,
+`gateway_policy_version`, `gateway_policy_age_seconds`, `gateway_policy_reloads_total{reason}`,
+`gateway_policy_reload_failures_total`, `gateway_policy_invalid_documents{collection}`,
+`gateway_change_stream_up`, `gateway_upstream_up{upstream}`, `gateway_build_info`.
+
+## Policy: allow-lists from MongoDB
+
+Collections `upstreams`, `toolsets`, `grants`, `meta` in `GATEWAY_MONGO_DB`
+(schemas in `../schemas`, pydantic mirrors in `policy/models.py`). Evaluation per request
+(`policy/snapshot.py`, `policy/matcher.py`), as in docs/PLAN.md 3.2:
+
+- a grant matches by subject: `anonymous` (everyone, the guest floor), `authenticated`
+  (any valid token), `claim` (`path` dotted into the claims, `op` eq/in/contains/exists;
+  `contains` also understands space-separated string claims such as `scope`),
+  `client_id` (`Principal.client_id`, else the `azp`/`client_id` claim);
+- effective tools = union of `allow` of the enabled toolsets of all matching enabled
+  grants, minus the union of their `deny`; fnmatch globs on namespaced names
+  (`<upstream-id>_<tool>`); deny by default; memoised per `Principal.cache_key`;
+- `tools/list` is filtered, a `tools/call` on a hidden tool answers exactly like an
+  unknown tool (`Unknown tool: '<name>'`) and counts in `gateway_policy_denials_total`.
+
+How the reload works (`policy/store.py`, `policy/watcher.py`, ADR 0008):
+
+1. Startup: `load()` reads the four collections with `readConcern: majority` (re-reading
+   if `meta.version` moved meanwhile), builds an immutable `PolicySnapshot`, swaps it into
+   the `PolicyHolder` the middleware reads. `/readyz` is 503 until that first load
+   succeeds; if Mongo is down the gateway keeps retrying in the background and serves
+   nothing meanwhile (deny by default).
+2. One database change stream per process, filtered to the four collections,
+   `fullDocument: updateLookup`; any event is debounced 250 ms into one full reload and
+   an atomic swap. The resume token is kept in memory: resumable errors reopen from it,
+   `ChangeStreamHistoryLost` / `invalidate` drop it and reload fully. Every (re)open
+   without a token also triggers a reload, so nothing between the last load and the
+   stream start is missed.
+3. A `GATEWAY_POLICY_POLL_SEC` poll of `meta.version` reloads whenever the stored version
+   differs from the loaded one: covers a dead stream and Atlas tiers without change
+   streams, at poll latency. Admin writes must bump `meta.version` (same transaction) for
+   the poll to notice them; the stream notices any write.
+4. After a swap the watcher runs `registry.apply(snapshot)` (new upstreams, WP4) and
+   publishes `ToolsListChanged` on the in-process subscription bus, so modern clients with
+   an open `subscriptions/listen` stream get `notifications/tools/list_changed`
+   (ADR 0003). Others re-list when `ttlMs` expires (ADR 0002).
+5. A failed reload keeps the previous snapshot and the pod stays ready; `/readyz` shows
+   `policy_age_seconds` and `last_error`, `gateway_policy_age_seconds` keeps growing, and
+   the non-critical `policy_stream` check shows the change-stream state. Alert on age.
+
+Measured on the local stack: an edit shows in the next `tools/list` after about 0.4 s
+(250 ms debounce + load); a forced replica-set step-down is absorbed by pymongo's own
+resume without the gateway noticing; a full Mongo outage leaves the stale snapshot in
+service with reconnect attempts backing off to 10 s.
 
 ## Layout
 
@@ -137,35 +191,45 @@ src/mcp_gateway/
   settings.py             pydantic-settings, prod guards
   health.py               readiness registry, /healthz /readyz handlers
   telemetry.py            structlog JSON logging
-  smoke.py                smoke check: guest, garbage bearer, dev1 (make smoke)
+  smoke.py                smoke check: guest, garbage bearer, live allow-list edit, dev1 (make smoke)
   debug_tools.py          gateway_whoami, registered only when GATEWAY_ENV=dev
   auth/principal.py       Principal (frozen dataclass, cache_key), current_principal()
   auth/context.py         bind_principal(): ContextVar scope used by the ASGI layer
   auth/jwt.py             GatewayJWTVerifier on FastMCP's JWTVerifier, OIDC discovery, JwtAuth lifecycle
   auth/asgi.py            BearerAuthMiddleware around /mcp: anonymous | user | 401 + WWW-Authenticate
   auth/metadata.py        RFC 9728 protected-resource metadata routes
-  policy/snapshot.py      PolicySnapshot, ToolFilter, AllowAllSnapshot
-  policy/store.py         PolicyStore protocol, ChangeEvent, StaticPolicyStore
+  policy/models.py        pydantic models for toolsets/grants/meta (mirror schemas/)
+  policy/matcher.py       subject matching (claim paths, ops) and GlobToolFilter
+  policy/snapshot.py      PolicySnapshot (effective_tools, matching_grants), build_snapshot, AllowAllSnapshot
+  policy/store.py         PolicyStore protocol, ChangeEvent, MongoPolicyStore (load + change stream + poll), StaticPolicyStore
+  policy/watcher.py       PolicyHolder (atomic swap), PolicyWatcher (debounce, reload, list_changed, metrics, probes)
   policy/middleware.py    PolicyMiddleware: filters tools/list, blocks tools/call, hides the rest
   upstreams/models.py     UpstreamConfig (mirrors schemas/upstreams.schema.json), CatalogTool, UpstreamHealth
   upstreams/registry.py   UpstreamRegistry: create_proxy + mount(namespace=), apply/catalog/health
   middleware/metrics.py   Prometheus counters and histograms
   middleware/audit.py     one structured line per tools/call
-tests/unit                settings, principal, health, policy, metrics/audit, app assembly, auth (in-process IdP)
-tests/integration         in-process gateway + FastMCP client against the local stack and Keycloak (skips if down)
+tests/unit                settings, principal, health, policy models/matcher (hypothesis)/watcher/store/middleware, metrics/audit, app assembly, auth (in-process IdP)
+tests/integration         in-process gateway + FastMCP client against the local stack and Keycloak (skips if down):
+                          static policy (test_gateway_live), auth flows (test_auth_live), Mongo policy with live
+                          edits, listen stream, poll fallback and replica-set step-down (test_policy_live)
 ```
 
 FastMCP middleware order (outermost first): `PolicyMiddleware`, `AuditMiddleware`,
 `MetricsMiddleware`, `ErrorHandlingMiddleware`. The principal is read from
-`principal_var` or `request.state.principal`, both set by `BearerAuthMiddleware`.
+`principal_var` or `request.state.principal`, both set by `BearerAuthMiddleware`. The SDK
+`ListenHandler` is registered on the low-level server in `app.py` (ADR 0003) so
+`subscriptions/listen` works and `tools.listChanged` is advertised.
 
 ## Tests
 
 ```bash
-uv run pytest            # unit + integration (integration skips without `make up`)
+uv run pytest            # unit + integration (integration skips without `make up` + `make seed`)
 uv run pytest -m "not integration"
 uv run ruff check . && uv run ruff format --check .
 ```
+
+The Mongo-policy integration tests re-seed the policy collections from `local/seed`
+before and after they run.
 
 ## Container
 

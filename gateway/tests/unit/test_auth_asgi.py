@@ -48,6 +48,7 @@ def make_client(idp: FakeIdp, **overrides: Any) -> Iterator[TestClient]:
         log_level="INFO",
         static_upstreams=[],
         oidc_issuer=idp.issuer,
+        policy_source="static",
         **overrides,
     )
     gw = build_gateway(settings, jwt_auth=JwtAuth(settings, http_client=idp.client()))

@@ -12,7 +12,7 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.metrics_port == 9090
     assert s.allow_anonymous is True
     assert s.mcp_path == "/mcp"
-    assert [u.id for u in s.static_upstreams] == ["public", "private"]
+    assert [u.id for u in s.static_upstreams] == ["sample-public", "sample-private"]
     assert s.static_upstreams[0].url == "http://localhost:8081/mcp"
     assert list(DEFAULT_STATIC_UPSTREAMS) == s.static_upstreams
     assert "localhost" in s.effective_allowed_hosts

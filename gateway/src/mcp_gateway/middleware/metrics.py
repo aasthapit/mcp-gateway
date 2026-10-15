@@ -57,6 +57,23 @@ POLICY_VERSION = Gauge("gateway_policy_version", "Version of the in-memory polic
 POLICY_AGE = Gauge(
     "gateway_policy_age_seconds", "Seconds since the in-memory policy snapshot was loaded."
 )
+POLICY_RELOADS = Counter(
+    "gateway_policy_reloads_total",
+    "Policy snapshot swaps by trigger (initial|stream|poll).",
+    ["reason"],
+)
+POLICY_RELOAD_FAILURES = Counter(
+    "gateway_policy_reload_failures_total",
+    "Policy reloads that failed (the previous snapshot stays in use).",
+)
+POLICY_INVALID_DOCS = Gauge(
+    "gateway_policy_invalid_documents",
+    "Policy documents the last reload skipped because they did not validate.",
+    ["collection"],
+)
+CHANGE_STREAM_UP = Gauge(
+    "gateway_change_stream_up", "1 while the MongoDB policy change stream is open."
+)
 UPSTREAM_UP = Gauge(
     "gateway_upstream_up", "1 when the upstream is considered healthy.", ["upstream"]
 )

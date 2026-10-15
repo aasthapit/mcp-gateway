@@ -18,6 +18,7 @@ TelemetryMode = Literal["native", "propagation_only", "off"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 UpstreamTransport = Literal["http", "sse", "stdio"]
 ProtocolMode = Literal["auto", "legacy", "2026-07-28"]
+PolicySource = Literal["mongo", "static"]
 
 #: JWS algorithms the verifier may be configured with, mapped to their JWK key family.
 #: Symmetric ``HS*`` and ``none`` are deliberately absent (RFC 8725 section 3.1).
@@ -53,9 +54,11 @@ class StaticUpstream(BaseModel):
     per backend connection; pin ``2026-07-28`` for known-modern stateless upstreams."""
 
 
+#: Ids match ``local/seed/upstreams.json`` so the seeded toolsets (``sample-public_*``)
+#: apply to the statically mounted sample upstreams when developing on the host.
 DEFAULT_STATIC_UPSTREAMS: tuple[StaticUpstream, ...] = (
-    StaticUpstream(id="public", url="http://localhost:8081/mcp"),
-    StaticUpstream(id="private", url="http://localhost:8082/mcp"),
+    StaticUpstream(id="sample-public", url="http://localhost:8081/mcp"),
+    StaticUpstream(id="sample-private", url="http://localhost:8082/mcp"),
 )
 
 
@@ -107,6 +110,14 @@ class Settings(BaseSettings):
 
     mongo_uri: str = "mongodb://root:devpass@localhost:27017/?replicaSet=rs0&directConnection=true"
     mongo_db: str = "mcp_gateway"
+
+    policy_source: PolicySource = "mongo"
+    """``mongo``: allow-lists from MongoDB with hot reload (WP3). ``static``: allow-all,
+    dev/test only (refused in prod)."""
+    policy_poll_sec: float = Field(default=30.0, ge=1.0)
+    """Fallback poll of ``meta.version`` when the change stream misses or is unavailable."""
+    policy_debounce_ms: int = Field(default=250, ge=0, le=10_000)
+    """Change-stream events arriving within this window trigger one reload."""
 
     upstream_secrets_dir: str = "/etc/gateway/upstream-secrets"
 
@@ -200,6 +211,8 @@ class Settings(BaseSettings):
             problems.append("GATEWAY_OIDC_ISSUER must be https:// in prod")
         if self.jwks_uri is not None and not self.jwks_uri.startswith("https://"):
             problems.append("GATEWAY_JWKS_URI must be https:// in prod")
+        if self.policy_source != "mongo":
+            problems.append("GATEWAY_POLICY_SOURCE must be mongo in prod")
         if problems:
             raise ValueError("; ".join(problems))
         return self
