@@ -60,6 +60,91 @@ jobs:
         working-directory: admin-ui
         run: npm ci && npm test && npm run build
 
+  gateway-unit:
+    name: gateway unit tests + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: gateway/uv.lock
+      - name: uv sync
+        run: uv sync --frozen
+      - name: pytest (unit; integration and drills need the stack)
+        run: uv run --frozen pytest -m "not integration and not drill"
+      - name: Build sdist + wheel and import the installed wheel
+        run: |
+          set -euo pipefail
+          uv build
+          uv venv --python 3.12 "$RUNNER_TEMP/wheel-venv"
+          uv pip install --python "$RUNNER_TEMP/wheel-venv/bin/python" dist/*.whl
+          "$RUNNER_TEMP/wheel-venv/bin/python" -c 'import mcp_gateway.main, mcp_gateway.smoke; print("import ok")'
+
+  gateway-integration:
+    name: gateway integration tests (compose stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The runner image ships podman too; the Makefile would pick it, but the stack runs on Docker.
+      COMPOSE: docker compose
+      CONTAINER: docker
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: gateway/uv.lock
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the sample upstream image (GHA layer cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: sample-upstreams
+          file: sample-upstreams/Containerfile
+          tags: localhost/mcp-sample-upstreams:dev
+          load: true
+          cache-from: type=gha,scope=sample-upstreams
+          cache-to: type=gha,mode=max,scope=sample-upstreams
+      - name: uv sync (in parallel with image pulls)
+        working-directory: gateway
+        run: |
+          docker compose -f ../local/compose.yaml pull mongo keycloak &
+          uv sync --frozen
+          wait
+      - name: make up (mongo rs PRIMARY + validators, keycloak realm import + OIDC discovery)
+        # The image is already built and loaded above; `up --build` reuses its cached layers.
+        run: make up COMPOSE="$COMPOSE"
+      - name: make seed
+        run: make seed COMPOSE="$COMPOSE"
+      - name: Readiness (local/smoke.sh - rs.status PRIMARY, seeded meta.version, tokens, upstreams)
+        run: local/smoke.sh
+      - name: Route the podman CLI to docker (upstream stop/start tests)
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          printf '#!/bin/sh\nexec docker "$@"\n' > "$RUNNER_TEMP/bin/podman"
+          chmod +x "$RUNNER_TEMP/bin/podman"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: pytest -m integration
+        working-directory: gateway
+        run: |
+          set -o pipefail
+          uv run --frozen pytest -m integration -rs -v | tee "$RUNNER_TEMP/pytest.log"
+          # The live suites skip themselves when the stack is unreachable; here that is a failure.
+          if grep -E '^SKIPPED' "$RUNNER_TEMP/pytest.log"; then
+            echo "::error::integration tests skipped although the stack is up"; exit 1
+          fi
+      - name: Gateway smoke (in-process gateway, guest + dev1 + live allow-list change)
+        run: |
+          set -euo pipefail
+          tok=$(make -s token KC_USER=dev1)
+          cd gateway && GATEWAY_SMOKE_TOKEN="$tok" uv run --frozen python -m mcp_gateway.smoke
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose -f local/compose.yaml --env-file local/.env logs --no-color --tail 200
+
   compose:
     name: compose config
     runs-on: ubuntu-latest
