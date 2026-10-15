@@ -114,6 +114,14 @@ jobs:
           docker compose -f ../local/compose.yaml pull mongo keycloak &
           uv sync --frozen
           wait
+      - name: Pre-create the Keycloak volume owned by the keycloak user
+        # compose mounts keycloak-data at /opt/keycloak/data/h2, which the image lacks, so
+        # Docker creates it root-owned and Keycloak (uid 1000) cannot write H2 (rootless
+        # podman maps it to the user instead).
+        run: |
+          docker volume create --label com.docker.compose.project=mcp-gateway \
+            --label com.docker.compose.volume=keycloak-data mcp-gateway_keycloak-data
+          docker run --rm -v mcp-gateway_keycloak-data:/d --entrypoint chown docker.io/library/mongo:8 1000:0 /d
       - name: make up (mongo rs PRIMARY + validators, keycloak realm import + OIDC discovery)
         # The image is already built and loaded above; `up --build` reuses its cached layers.
         run: make up COMPOSE="$COMPOSE"
