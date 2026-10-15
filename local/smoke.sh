@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # `make smoke` — end-to-end checks of the local stack.
-# WP0: infra checks only. WP1+ will extend this to run an MCP client as guest and as dev1
-# through the gateway and assert the tool lists differ.
+# Infra checks (Mongo replica set, Keycloak tokens, sample upstreams). The gateway checks
+# (guest, garbage bearer, dev1) run afterwards from the Makefile via `python -m mcp_gateway.smoke`.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -27,7 +27,11 @@ services:
       - bash
       - -ec
       - |
-        head -c 756 /dev/urandom | base64 -w0 > /tmp/mongo-keyfile
+        # The keyfile lives in the container filesystem (not a volume), so it survives
+        # `podman restart` but not a recreate. Generate it only when missing: on a restart it
+        # already exists as a 400 file owned by mongodb, and overwriting it fails with
+        # "Permission denied" and crash-loops the container.
+        [ -s /tmp/mongo-keyfile ] || head -c 756 /dev/urandom | base64 -w0 > /tmp/mongo-keyfile
         chown mongodb:mongodb /tmp/mongo-keyfile
         chmod 400 /tmp/mongo-keyfile
         exec docker-entrypoint.sh "$@"
