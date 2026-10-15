@@ -125,7 +125,9 @@ fire on any quiet afternoon.
   documented in the gateway README, and `RESPONSE_MAX_BYTES=0` restores it.
 - Rollouts need `terminationGracePeriodSeconds ≥ preStop + SHUTDOWN_GRACE_SEC + ~5 s`
   (chart: 5 + 45 < 60). Tool calls longer than the grace period are cut during a rollout.
-- The `sigterm-first` rolling-restart drill shows the router's connection-failure retries
-  matter: without the preStop pause, about 1 % of requests needed a retry to the other pod.
-  The OpenShift router (HAProxy) retries failed connections, and the preStop sleep makes
-  it unnecessary.
+- The preStop sleep is load-bearing. The `sigterm-first` rolling-restart drill skips it:
+  about 1 % of requests needed the balancer to retry a refused connection on the other pod,
+  and in some runs 1 or 2 of ~2 000 requests failed outright. Those failures happen when the
+  draining pod closes an idle keep-alive connection just as the balancer reuses it; a
+  non-idempotent POST must not be retried blindly. With the chart's order (endpoint removed,
+  preStop sleep, then SIGTERM) the drill has zero failures.

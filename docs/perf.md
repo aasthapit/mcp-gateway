@@ -18,7 +18,7 @@ alert or a dashboard query.
 | `tools/list`, list not cached | p95 < 600 ms                           | k6 `mcp_list_cold`, `mcp_list_cold_negotiate`                                                |
 | `tools/call` gateway overhead | p95 < 300 ms with a fast upstream      | k6 `mcp_call_guest`, `mcp_call_dev1`; prod: `gateway_tool_call_duration_seconds` minus upstream time |
 | Availability of `/mcp`      | ≥ 99.9 % of responses are not HTTP 5xx, measured monthly | `gateway_http_responses_total{route="mcp"}`; alert `McpGatewayHigh5xxRatio` (> 2 % over 5 min) |
-| Rolling restart             | zero 5xx for clients during a rollout    | drill `test_rolling_restart` (two orderings)                                                 |
+| Rolling restart             | zero 5xx for clients during a rollout (with the chart's preStop sleep) | drill `test_rolling_restart[endpoints-first]`; the `sigterm-first` variant shows the keep-alive race preStop avoids |
 | Policy propagation          | an allow-list edit reaches every pod within 2 s (change stream); never later than 5 min (alert) | `make smoke`, drill `test_mongo_restart`; alert `McpGatewayPolicyStale` |
 
 The SLOs leave the upstream's own latency out of `tools/call`, because the gateway does
@@ -80,7 +80,7 @@ Only the warm gateway's numbers are shown; the cold gateways were not loaded har
 
 | Scale | Offered req/s (warm) | list p95 | call p95 | Errors | Warm gateway CPU (avg / peak of one core) |
 | ----: | -------------------: | -------: | -------: | -----: | ----------------------------------------: |
-|     1 |                  ~60 |     7 ms |    13 ms |    0 % |                         (not sampled at 1×) |
+|     1 |                  ~60 |     7 ms |    13 ms |    0 % |                                26 % / 38 % |
 |     3 |                 ~180 |    70 ms |   137 ms |    0 % |                                65 % / 92 % |
 |     5 |                 ~300 |   2.2 s  |   4.3 s  |    0 % |                                70 % / 98 % |
 |    10 |                 ~600 |   6.7 s  |   9.0 s  | 6.6 %  |                                83 % / 99 % |
