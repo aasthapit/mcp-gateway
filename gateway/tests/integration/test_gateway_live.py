@@ -1,4 +1,8 @@
-"""Needs the local stack (``make up``): sample upstreams on localhost:8081 and :8082."""
+"""Needs the local stack (``make up``): sample upstreams on localhost:8081 and :8082.
+
+Runs with the static (allow-all) policy; the Mongo-backed policy is covered by
+``test_policy_live.py``.
+"""
 
 from __future__ import annotations
 
@@ -31,7 +35,7 @@ def stack_available() -> None:
 
 @pytest.fixture(scope="module")
 def base_url(stack_available: None) -> Iterator[str]:
-    settings = Settings(metrics_port=0, log_json=False, log_level="WARNING")
+    settings = Settings(metrics_port=0, log_json=False, log_level="WARNING", policy_source="static")
     gw = build_gateway(settings)
     port = free_port()
     server = uvicorn.Server(
@@ -58,13 +62,17 @@ def base_url(stack_available: None) -> Iterator[str]:
 async def test_guest_lists_and_calls_through_gateway(base_url: str, mode: str) -> None:
     async with Client(base_url + "/mcp", mode=mode) as c:
         names = {t.name for t in await c.list_tools()}
-        assert {"public_time_now", "public_echo", "private_secret_lookup"} <= names
-        res = await c.call_tool("public_echo", {"text": "hello"})
+        assert {
+            "sample-public_time_now",
+            "sample-public_echo",
+            "sample-private_secret_lookup",
+        } <= names
+        res = await c.call_tool("sample-public_echo", {"text": "hello"})
         assert res.data == "hello"
         assert await c.list_resources() == []
         assert await c.list_prompts() == []
         with pytest.raises(Exception, match="Unknown tool"):
-            await c.call_tool("public_missing", {})
+            await c.call_tool("sample-public_missing", {})
 
 
 def test_modern_tools_list_carries_cache_hints(base_url: str) -> None:
@@ -81,7 +89,7 @@ def test_modern_tools_list_carries_cache_hints(base_url: str) -> None:
     result = r.json()["result"]
     assert result["ttlMs"] == 30_000
     assert result["cacheScope"] == "private"
-    assert {t["name"] for t in result["tools"]} >= {"public_echo"}
+    assert {t["name"] for t in result["tools"]} >= {"sample-public_echo"}
 
 
 def test_health_metrics_and_metadata(base_url: str) -> None:
@@ -89,10 +97,10 @@ def test_health_metrics_and_metadata(base_url: str) -> None:
     assert httpx.get(base_url + "/readyz").status_code == 200
     text = httpx.get(base_url + "/metrics").text
     assert (
-        'gateway_tool_calls_total{outcome="ok",principal_kind="anonymous",tool="public_echo",upstream="public"}'
+        'gateway_tool_calls_total{outcome="ok",principal_kind="anonymous",tool="sample-public_echo",upstream="sample-public"}'
         in text
     )
-    assert 'gateway_upstream_up{upstream="private"} 1.0' in text
+    assert 'gateway_upstream_up{upstream="sample-private"} 1.0' in text
     assert (
         httpx.get(base_url + "/.well-known/oauth-protected-resource")
         .json()["resource"]

@@ -10,4 +10,4 @@ Effective tools with this seed:
 | ------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------ |
 | guest                          | anon-default             | `sample-public_time_now`, `sample-public_echo`                                             |
 | dev1 (role `mcp-developer`)    | anon-default, developers | guest + `sample-private_secret_lookup`                                                     |
-| ci-runner (client credentials) | anon-default, ci-bot     | guest set (deny of `echo` only applies inside `ci-tools`; the guest floor still allows it) |
+| ci-runner (client credentials) | anon-default, ci-bot     | `sample-public_time_now` only: `ci-tools` denies `sample-public_echo`, and a deny wins over every allow in the union (PLAN 3.2) |

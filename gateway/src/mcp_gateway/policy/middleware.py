@@ -1,12 +1,18 @@
-"""Per-request tool visibility and call authorisation.
+"""Per-request tool visibility and call authorisation (docs/PLAN.md 3.1 step 3).
 
-WP1 behaviour: read the principal (anonymous unless WP2's auth layer set one), ask the
-current snapshot for the principal's :class:`ToolFilter`, filter ``tools/list`` and block
-``tools/call`` for anything not allowed, and hide resources and prompts entirely (v1
-exposes tools only). WP3 swaps the snapshot provider for the live Mongo-backed one; this
-file should not need to change for that.
+Reads the principal (``request.state.principal`` / ``principal_var`` set by WP2's auth
+layer; anonymous when absent), asks the current snapshot (``PolicyHolder.get`` wired in
+``app.py``) for the principal's :class:`ToolFilter`, filters ``tools/list``, blocks
+``tools/call`` for anything not allowed, and hides resources and prompts entirely (v1
+exposes tools only).
 
-Denied calls answer exactly like unknown tools so existence is not leaked.
+A denied call answers *exactly* like an unknown tool: :class:`PolicyDenied` subclasses
+FastMCP's ``NotFoundError`` and carries the same ``Unknown tool: '<name>'`` message that
+FastMCP itself produces, so the wire error reveals nothing about whether the tool exists.
+(A distinct ``ToolError("Tool not found")`` would be distinguishable from the native
+unknown-tool error, which is the leak the requirement is about.) Denials count in
+``gateway_policy_denials_total{tool,principal_kind}`` and emit a ``tools.call.denied``
+audit line.
 """
 
 from __future__ import annotations
