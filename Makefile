@@ -14,7 +14,8 @@ PRE_COMMIT ?= $(shell command -v pre-commit >/dev/null 2>&1 && echo pre-commit |
 
 # Keycloak (host-visible). Overridable: make token KC_USER=admin1 KC_PASS=admin1
 # (not USER/PASS: the shell exports USER as the login name and would win over ?=)
-KC_PORT ?= $(shell grep -E '^KEYCLOAK_PORT=' $(ENVFILE) 2>/dev/null | cut -d= -f2 || echo 8180)
+# (fresh clone: local/.env does not exist yet when this is expanded, hence the $(or).)
+KC_PORT ?= $(or $(shell grep -E '^KEYCLOAK_PORT=' $(ENVFILE) 2>/dev/null | cut -d= -f2),8180)
 KC      := http://localhost:$(KC_PORT)/realms/mcp
 KC_USER ?= dev1
 KC_PASS ?= $(KC_USER)

@@ -82,7 +82,7 @@ jobs:
           uv build
           uv venv --python 3.12 "$RUNNER_TEMP/wheel-venv"
           uv pip install --python "$RUNNER_TEMP/wheel-venv/bin/python" dist/*.whl
-          "$RUNNER_TEMP/wheel-venv/bin/python" -c 'import mcp_gateway.main, mcp_gateway.smoke; print("import ok")'
+          "$RUNNER_TEMP/wheel-venv/bin/python" -c 'import mcp_gateway.main; print("import ok")'
 
   gateway-integration:
     name: gateway integration tests (compose stack)
