@@ -9,6 +9,7 @@ dependencies = [
     "uvicorn>=0.35",
     "prometheus-client>=0.22",
     "structlog>=25.1",
+    "pymongo>=4.13",
 ]
 
 [project.scripts]

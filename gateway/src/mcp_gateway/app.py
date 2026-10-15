@@ -4,17 +4,19 @@ Layout of the ASGI app::
 
     Starlette (outer)
       /healthz, /readyz, /metrics, /.well-known/oauth-protected-resource   (plain routes)
+      /internal/catalog, /internal/upstreams/*, /internal/effective-tools   (token-guarded)
       Mount("/")  ->  FastMCP http_app(path=/mcp, stateless_http=True)
                         HostOriginGuard -> [WP2 auth ASGI middleware] -> MCP transport
                           FastMCP middleware: Policy -> Audit -> Metrics -> ErrorHandling
 
-The outer app's lifespan drives the FastMCP app's lifespan and flips readiness afterwards.
+The outer app's lifespan drives the FastMCP app's lifespan, loads and mounts the
+upstreams, starts the upstream health probe and flips readiness afterwards.
 """
 
 from __future__ import annotations
 
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -29,11 +31,12 @@ from starlette.routing import Mount, Route
 
 from mcp_gateway import __version__
 from mcp_gateway.health import Readiness, healthz, make_readyz
+from mcp_gateway.internal_routes import build_internal_routes
 from mcp_gateway.middleware.audit import AuditMiddleware
 from mcp_gateway.middleware.metrics import (
     POLICY_AGE,
     POLICY_VERSION,
-    UPSTREAM_UP,
+    UPSTREAM_ERRORS,
     MetricsMiddleware,
 )
 from mcp_gateway.policy.middleware import PolicyMiddleware
@@ -41,7 +44,9 @@ from mcp_gateway.policy.snapshot import AllowAllSnapshot, PolicySnapshot
 from mcp_gateway.policy.store import PolicyStore, StaticPolicyStore
 from mcp_gateway.settings import Settings, load_settings
 from mcp_gateway.telemetry import configure_logging, get_logger
+from mcp_gateway.upstreams.models import UpstreamHealth
 from mcp_gateway.upstreams.registry import UpstreamRegistry
+from mcp_gateway.upstreams.source import UpstreamSource, make_upstream_source
 
 log = get_logger(__name__)
 
@@ -60,6 +65,7 @@ class Gateway:
     registry: UpstreamRegistry
     readiness: Readiness
     policy_store: PolicyStore
+    upstream_source: UpstreamSource
     snapshot: PolicySnapshot = field(default_factory=AllowAllSnapshot)
     app: Starlette | None = None
 
@@ -68,6 +74,16 @@ class Gateway:
         self.snapshot = snapshot
         POLICY_VERSION.set(snapshot.version)
         POLICY_AGE.set(snapshot.age_seconds)
+
+    async def reload_upstreams(self) -> Mapping[str, UpstreamHealth]:
+        """Re-read the desired upstream list and reconcile the registry.
+
+        WP4 interim entry point (startup and ``POST /internal/upstreams/reload``). When WP3
+        lands, its watcher calls ``registry.apply(snapshot)`` with ``snapshot.upstreams``
+        and this becomes ``await self.registry.apply(self.snapshot)``.
+        """
+        desired = await self.upstream_source.load()
+        return await self.registry.apply_configs(desired)
 
 
 def build_gateway(
@@ -93,13 +109,19 @@ def build_gateway(
         cache_scope="private",  # tool lists vary per caller; never share across principals
         mask_error_details=settings.is_prod,
     )
-    registry = UpstreamRegistry(mcp)
+    registry = UpstreamRegistry(mcp, settings=settings)
     gateway = Gateway(
         settings=settings,
         mcp=mcp,
         registry=registry,
         readiness=Readiness(),
         policy_store=policy_store or StaticPolicyStore(),
+        upstream_source=make_upstream_source(settings),
+    )
+    # Ready once at least one enabled upstream is mounted; a dead upstream stays mounted and
+    # does not flip readiness. Reported but non-critical when the operator opts out.
+    gateway.readiness.register(
+        "upstreams", registry.readiness_probe, critical=settings.ready_requires_upstream
     )
 
     # Order matters: first added is outermost (FastMCP builds the chain in list order).
@@ -108,7 +130,8 @@ def build_gateway(
     mcp.add_middleware(MetricsMiddleware(upstream_of=registry.namespace_of))
     mcp.add_middleware(ErrorHandlingMiddleware(include_traceback=not settings.is_prod))
 
-    registry.mount_static(settings)
+    if settings.upstreams_source == "static":
+        registry.mount_static(settings)  # WP1 behaviour: mounted before the app starts
 
     mcp_app = mcp.http_app(
         path=settings.mcp_path,
@@ -123,8 +146,16 @@ def build_gateway(
         metrics_server = None
         async with mcp_app.lifespan(mcp_app):
             gateway.set_snapshot(await gateway.policy_store.load())
-            for uid in registry.namespaces:
-                UPSTREAM_UP.labels(upstream=uid).set(1)
+            try:
+                await gateway.reload_upstreams()
+            except Exception as exc:
+                UPSTREAM_ERRORS.labels("-", "load_failed").inc()
+                log.error(
+                    "upstream list could not be loaded; no upstreams mounted",
+                    source=settings.upstreams_source,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            await registry.start()
             if settings.metrics_port:
                 metrics_server, _ = start_http_server(settings.metrics_port, addr=settings.host)
                 log.info("metrics listener started", port=settings.metrics_port)
@@ -134,12 +165,16 @@ def build_gateway(
                 version=__version__,
                 env=settings.env,
                 mcp_path=settings.mcp_path,
+                upstreams_source=settings.upstreams_source,
                 upstreams=list(registry.namespaces),
+                degraded={u: h.reason for u, h in registry.health().items() if not h.mounted},
             )
             try:
                 yield {"gateway": gateway}
             finally:
                 gateway.readiness.started = False
+                await registry.stop()
+                await gateway.upstream_source.close()
                 if metrics_server is not None:
                     metrics_server.shutdown()
 
@@ -169,6 +204,7 @@ def build_gateway(
                 protected_resource_metadata,
                 methods=["GET"],
             ),
+            *build_internal_routes(gateway),  # plain routes: never reach the /mcp mount
             Mount("/", app=mcp_app),
         ],
         lifespan=lifespan,
