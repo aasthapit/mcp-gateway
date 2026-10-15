@@ -6,7 +6,7 @@
 export { guestMix } from "./guest.js";
 export { dev1Mix } from "./dev1.js";
 export { listenHolder } from "./listen.js";
-export { coldList } from "./cold.js";
+export { coldList, coldListNegotiate } from "./cold.js";
 
 const DURATION = __ENV.LOADTEST_DURATION || "60s";
 const SCALE = Number(__ENV.LOADTEST_SCALE || 1);
@@ -18,8 +18,8 @@ function rate(name, perSec, maxVUs) {
     rate: Math.max(1, Math.round(perSec * SCALE)),
     timeUnit: "1s",
     duration: DURATION,
-    preAllocatedVUs: Math.ceil(maxVUs / 2),
-    maxVUs,
+    preAllocatedVUs: Math.ceil((maxVUs * SCALE) / 2),
+    maxVUs: Math.ceil(maxVUs * SCALE),
   };
 }
 
@@ -28,6 +28,7 @@ export const options = {
     guest: rate("guestMix", 40, 60),
     dev1: rate("dev1Mix", 10, 30),
     cold: rate("coldList", 5, 10),
+    cold_negotiate: rate("coldListNegotiate", 2, 10),
     listeners: {
       executor: "constant-vus",
       exec: "listenHolder",
@@ -40,6 +41,7 @@ export const options = {
     mcp_list_cached: ["p(95)<150"],
     mcp_list_dev1: ["p(95)<150"],
     mcp_list_cold: ["p(95)<600"],
+    mcp_list_cold_negotiate: ["p(95)<600"],
     mcp_call_guest: ["p(95)<300"],
     mcp_call_dev1: ["p(95)<300"],
     mcp_errors: ["rate<0.01"],
@@ -55,7 +57,8 @@ export const options = {
 const TRENDS = [
   ["tools/list cached (guest)", "mcp_list_cached"],
   ["tools/list cached (dev1)", "mcp_list_dev1"],
-  ["tools/list cold (guest)", "mcp_list_cold"],
+  ["tools/list cold, shared upstream sessions (guest)", "mcp_list_cold"],
+  ["tools/list cold, per-request sessions + negotiation (guest)", "mcp_list_cold_negotiate"],
   ["tools/call guest (sample-public_echo)", "mcp_call_guest"],
   ["tools/call dev1 (sample-private_secret_lookup)", "mcp_call_dev1"],
 ];
