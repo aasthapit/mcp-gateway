@@ -43,6 +43,7 @@ SETUP_URI = f"mongodb://127.0.0.1:{PORT}/?directConnection=true"  # works before
 DB = "mcp_gateway"
 MAJORITY = WriteConcern(w="majority", wtimeout=10_000)
 PRIVATE = "sample-private_secret_lookup"
+DOWN_SEC = 5
 
 
 def sh(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -105,7 +106,7 @@ def test_mongo_restart_policy_stays_served_and_watcher_resumes(drill_mongo: Mong
                 id="sample-private", url="http://localhost:8082/mcp", protocol_mode="2026-07-28"
             ),
         ],
-        policy_poll_sec=2,
+        policy_poll_sec=60,  # edits after the restart must come through the change stream
     )
     with running_gateway(settings) as (base, gw):
         assert list_names(base) == GUEST_FLOOR
@@ -130,36 +131,41 @@ def test_mongo_restart_policy_stays_served_and_watcher_resumes(drill_mongo: Mong
             t.start()
         try:
             t0 = time.monotonic()
-            sh("restart", "--time", "5", NAME)  # SIGTERM -> clean step-down and restart
+            sh("stop", "--time", "5", NAME)  # SIGTERM: clean shutdown of the primary
+            down_at = time.monotonic()
+            time.sleep(DOWN_SEC)  # Mongo fully gone for a while, traffic continues
+            assert store.stream_up is False or not port_open("127.0.0.1", PORT)
+            sh("start", NAME)
             wait_until(lambda: primary(drill_mongo), 60, 0.5, what="primary after restart")
             back = time.monotonic() - t0
-            took = wait_until(
-                lambda: (
-                    store.stream_up and (store.resumes + store.full_reopens) > (resumes0 + reopens0)
-                ),
-                60,
-                0.2,
-                what="change stream reopened",
-            )
-            time.sleep(1)
+            down = time.monotonic() - down_at
+            # a new mongod process: started after we stopped the old one
+            assert drill_mongo.admin.command("serverStatus")["uptimeMillis"] < down * 1000
+            time.sleep(2)  # traffic keeps running against the recovered primary
         finally:
             stop.set()
             for t in threads:
                 t.join(10)
-        assert set(outcomes) == {"ok"}, outcomes  # policy served throughout
-        resumed = store.resumes > resumes0
+        assert set(outcomes) == {"ok"}, outcomes  # the snapshot kept serving the policy
         print(
-            f"\n  mongo restart: primary back after {back:.1f}s, stream reopened "
-            f"{took:.1f}s later ({'resumed with token' if resumed else 'full reopen'}); "
-            f"{outcomes['ok']} guest lists during the drill, all correct"
+            f"\n  mongo restart: down {down:.1f}s, primary back {back:.1f}s after SIGTERM; "
+            f"{outcomes['ok']} guest "
+            "tools/list during the drill, all 200 with the guest floor"
         )
 
-        # The watcher is live again: an edit after the restart reaches the gateway.
+        # The watcher is live again: an edit after the restart arrives through the stream
+        # (pymongo resumes the cursor with its token; our loop reopens it if that fails).
         original = sorted(GUEST_FLOOR)
         version = bump_toolset(drill_mongo, [*original, PRIVATE])
-        took = wait_until(lambda: PRIVATE in list_names(base), 10, 0.1, what="edit after restart")
+        took = wait_until(lambda: PRIVATE in list_names(base), 3, 0.05, what="edit after restart")
         assert gw.snapshot.version == version
+        assert gw.watcher is not None and gw.watcher.last_reload_reason == "stream"
+        assert store.stream_up
         bump_toolset(drill_mongo, original)
-        wait_until(lambda: list_names(base) == GUEST_FLOOR, 10, 0.1, what="revert after restart")
-        print(f"  edit after restart visible in {took * 1000:.0f} ms")
-        assert gw.watcher is not None and gw.watcher.staleness_seconds() < 10
+        wait_until(lambda: list_names(base) == GUEST_FLOOR, 3, 0.05, what="revert after restart")
+        print(
+            f"  edit after restart visible in {took * 1000:.0f} ms via the change stream "
+            f"(gateway-side reopens: {store.resumes - resumes0} resumed, "
+            f"{store.full_reopens - reopens0} full)"
+        )
+        assert gw.watcher.staleness_seconds() < 10

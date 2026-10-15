@@ -9,6 +9,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -267,7 +268,7 @@ class GatewayProcess:
         env["GATEWAY_PORT"] = str(self.port)
         log = self.log_path.open("ab")
         self.proc = subprocess.Popen(
-            ["uv", "run", "--frozen", "mcp-gateway"],
+            [sys.executable, "-m", "mcp_gateway.main"],  # the venv's python, no uv wrapper
             cwd=GATEWAY_DIR,
             env=env,
             stdout=log,
@@ -285,7 +286,6 @@ class GatewayProcess:
 
     def terminate(self, timeout: float = 30) -> int:
         assert self.proc is not None
-        # `uv run` forwards SIGTERM to the child (the gateway process).
         self.proc.send_signal(signal.SIGTERM)
         return self.proc.wait(timeout)
 
