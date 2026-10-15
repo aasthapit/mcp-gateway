@@ -1,0 +1,34 @@
+{{ .Chart.Name }} {{ .Chart.Version }} (image {{ include "mcp-gateway.image" . }}) released as {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+MCP endpoint:
+{{- if .Values.route.enabled }}
+  {{ include "mcp-gateway.publicBaseUrl" . }}{{ .Values.config.MCP_PATH }}
+  {{- if not .Values.route.host }}
+  (router-generated host: oc get route {{ include "mcp-gateway.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}')
+  {{- end }}
+{{- else }}
+  Route disabled; in-cluster: http://{{ include "mcp-gateway.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}{{ .Values.config.MCP_PATH }}
+{{- end }}
+
+Secrets:
+{{- if .Values.externalSecrets.enabled }}
+  ExternalSecrets -> {{ include "mcp-gateway.envSecretName" . }}{{ if .Values.secrets.upstreams.enabled }}, {{ include "mcp-gateway.upstreamsSecretName" . }}{{ end }}
+  Watch them sync:  oc get externalsecret -n {{ .Release.Namespace }}
+{{- else if .Values.secrets.create }}
+  Plain Secrets rendered from values (DEV ONLY).
+{{- else }}
+  Pre-existing Secrets expected: {{ include "mcp-gateway.envSecretName" . }}{{ if .Values.secrets.upstreams.enabled }}, {{ include "mcp-gateway.upstreamsSecretName" . }}{{ end }}
+{{- end }}
+
+Check:
+  oc rollout status deploy/{{ include "mcp-gateway.fullname" . }} -n {{ .Release.Namespace }}
+  oc get pods -l app.kubernetes.io/instance={{ .Release.Name }} -n {{ .Release.Namespace }}
+  curl -s {{ include "mcp-gateway.publicBaseUrl" . }}/readyz
+
+{{- if .Values.autoscaling.enabled }}
+HPA: {{ .Values.autoscaling.minReplicas }}..{{ .Values.autoscaling.maxReplicas }} replicas on CPU {{ .Values.autoscaling.targetCPUUtilizationPercentage }}%{{ if .Values.autoscaling.listenStreams.enabled }} + {{ .Values.autoscaling.listenStreams.metricName }}{{ end }}.
+{{- end }}
+{{- if .Values.podDisruptionBudget.enabled }}
+PDB: minAvailable {{ .Values.podDisruptionBudget.minAvailable }}.
+{{- end }}
+Docs: deploy/README.md (install, upgrade, rollback, scaling, secrets flow).

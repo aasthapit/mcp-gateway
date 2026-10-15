@@ -1,0 +1,328 @@
+# Default values for mcp-gateway. Overlays: values-dev.yaml (local/CRC, plain Secrets),
+# values-prod.yaml (ESO, re-encrypt-ready, ServiceMonitor, 3+ replicas).
+#
+# Every GATEWAY_* setting the image understands is documented in gateway/README.md and
+# gateway/src/mcp_gateway/settings.py. Non-secret settings go into the ConfigMap (`config`),
+# secrets come from a Secret (`secrets` / `externalSecrets`).
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  # The build pipeline (deploy/openshift/tekton) pushes here and rewrites `tag`/`digest`.
+  # `make deploy-image` builds the same name locally so the Containerfile and chart agree.
+  repository: ghcr.io/aasthapit/mcp-gateway
+  # Defaults to .Chart.appVersion when empty.
+  tag: ""
+  # Immutable reference; wins over `tag` when set (sha256:...). Prod should always pin this.
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# One uvicorn worker per pod by design (PLAN 3.6): scale replicas, never workers.
+replicaCount: 3
+revisionHistoryLimit: 3
+
+# SIGTERM closes SSE listeners gracefully; uvicorn's graceful timeout is 30 s, keep a margin.
+terminationGracePeriodSeconds: 60
+# Sleep before SIGTERM so the Route/Endpoints stop sending new requests first.
+preStopSleepSeconds: 5
+
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # The gateway never talks to the Kubernetes API.
+  automountServiceAccountToken: false
+
+# Restricted SCC (restricted-v2): no runAsUser so OpenShift assigns one from the namespace
+# range; the image runs as any UID in group 0 (see gateway/Containerfile).
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]
+
+# Memory limit == request (Guaranteed memory, no OOM surprises on a shared node). The CPU
+# limit is deliberately generous; set it equal to the request for a fully Guaranteed pod.
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# Only /tmp is written (HOME and TMPDIR point there).
+tmpVolume:
+  sizeLimit: 64Mi
+
+service:
+  type: ClusterIP
+  port: 8080
+  metricsPort: 9090
+  annotations: {}
+
+# Container ports (match GATEWAY_PORT / GATEWAY_METRICS_PORT baked into the image).
+containerPort: 8080
+metricsContainerPort: 9090
+
+# /healthz = process up; /readyz = lifespan finished + Mongo/upstream critical probes pass.
+probes:
+  startup:
+    httpGet: { path: /healthz, port: http }
+    periodSeconds: 2
+    failureThreshold: 30 # 60 s to come up (JWKS fetch + Mongo snapshot)
+    timeoutSeconds: 2
+  readiness:
+    httpGet: { path: /readyz, port: http }
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 3
+  liveness:
+    httpGet: { path: /healthz, port: http }
+    periodSeconds: 20
+    failureThreshold: 3
+    timeoutSeconds: 3
+
+# ---------------------------------------------------------------------------------------
+# Non-secret settings -> ConfigMap, exposed as GATEWAY_* env vars (envFrom).
+# Keys are the suffix after GATEWAY_. Values are strings (Helm renders numbers/bools).
+# ---------------------------------------------------------------------------------------
+config:
+  ENV: prod
+  MCP_PATH: /mcp
+  # External origin for RFC 9728 metadata. Derived from route.host when empty.
+  PUBLIC_BASE_URL: ""
+  # JSON list of extra Host header values. Derived from route.host when empty.
+  ALLOWED_HOSTS: ""
+  HOST_ORIGIN_PROTECTION: "true"
+  # WP2 (auth). ALLOW_ANONYMOUS=false turns the gateway strict (guests get 401).
+  ALLOW_ANONYMOUS: "true"
+  OIDC_ISSUER: https://idp.example.com/realms/mcp
+  JWT_AUDIENCE: mcp-gateway
+  # WP3 (policy). The URI is a secret (credentials); the DB name and poll interval are not.
+  MONGO_DB: mcp_gateway
+  POLICY_POLL_SEC: "30"
+  # WP4 (upstreams). Secret files are mounted from secrets.upstreams at this path.
+  UPSTREAM_SECRETS_DIR: /etc/gateway/upstream-secrets
+  UPSTREAM_PROBE_SEC: "30"
+  TOOLS_LIST_TTL_SEC: "30"
+  LOG_LEVEL: INFO
+  LOG_JSON: "true"
+  # off | propagation_only | native (OTLP export; see telemetry.*)
+  TELEMETRY_MODE: "off"
+
+# Extra environment variables, verbatim (name/value or valueFrom).
+extraEnv: []
+# Extra envFrom sources (e.g. an existing ConfigMap with site settings).
+extraEnvFrom: []
+
+telemetry:
+  # When config.TELEMETRY_MODE != off, point the OTLP exporter at the collector.
+  otlpEndpoint: http://otel-collector.observability.svc:4318
+  serviceName: mcp-gateway
+
+# ---------------------------------------------------------------------------------------
+# Secrets. The Deployment consumes two Secrets:
+#   env       -> envFrom: GATEWAY_MONGO_URI, GATEWAY_INTERNAL_TOKEN
+#   upstreams -> mounted as files at config.UPSTREAM_SECRETS_DIR (one file per credential)
+# They are produced by ExternalSecrets (prod) or by this chart's plain Secrets (dev), or
+# pre-exist (set the names and leave both toggles off).
+# ---------------------------------------------------------------------------------------
+secrets:
+  env:
+    name: "" # default: <fullname>-env
+  upstreams:
+    name: "" # default: <fullname>-upstreams
+    enabled: true
+  # DEV ONLY: render plain Secrets from these values (values-dev.yaml). Never in prod.
+  create: false
+  values:
+    mongoUri: ""
+    internalToken: ""
+    # filename -> content, e.g. { "private.token": "..." }
+    upstreams: {}
+
+externalSecrets:
+  enabled: true
+  apiVersion: external-secrets.io/v1
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  env:
+    data:
+      - secretKey: GATEWAY_MONGO_URI
+        remoteRef: { key: mcp-gateway/mongo, property: uri }
+      - secretKey: GATEWAY_INTERNAL_TOKEN
+        remoteRef: { key: mcp-gateway/internal, property: token }
+  upstreams:
+    # Every key under the remote secret becomes one file in the upstream secrets dir.
+    dataFrom:
+      - extract: { key: mcp-gateway/upstreams }
+
+# Mounted read-only at config.UPSTREAM_SECRETS_DIR.
+upstreamSecretsVolume:
+  defaultMode: 0440
+
+# CA bundle for Mongo TLS (the Percona operator issues its own CA into <cluster>-ssl).
+# Mounted at mountPath/<key>; reference it from the Mongo URI with tlsCAFile=.
+mongoCA:
+  enabled: true
+  secretName: mcp-mongo-ssl
+  key: ca.crt
+  mountPath: /etc/gateway/mongo-ca
+
+# ---------------------------------------------------------------------------------------
+# Route (OpenShift). timeout: long tool calls; SSE streams themselves are kept alive by the
+# gateway's 15 s pings (docs/adr/0004). disable_cookies: stateless replicas, no affinity.
+# ---------------------------------------------------------------------------------------
+route:
+  enabled: true
+  # Placeholder: override per environment. Empty lets the router generate a host (dev only;
+  # prod rendering fails without a host because GATEWAY_PUBLIC_BASE_URL must be https).
+  host: mcp.example.com
+  path: ""
+  tls:
+    # edge (TLS ends at the router, plain HTTP to the pod) or reencrypt (router -> pod TLS;
+    # requires a TLS listener in the pod: see deploy/README.md "Re-encrypt").
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+    # reencrypt only: CA that signed the pod certificate (empty = service-ca).
+    destinationCACertificate: ""
+    # Optional custom certificate (otherwise the router's default wildcard cert).
+    certificate: ""
+    key: ""
+    caCertificate: ""
+  annotations:
+    haproxy.router.openshift.io/timeout: 1h
+    haproxy.router.openshift.io/disable_cookies: "true"
+  labels: {}
+
+# ---------------------------------------------------------------------------------------
+# Scaling / availability
+# ---------------------------------------------------------------------------------------
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  # Custom metric via prometheus-adapter / custom-metrics API. Needs the adapter rule that
+  # exposes gateway_open_listen_streams as a pods metric (deploy/README.md "Scaling").
+  listenStreams:
+    enabled: false
+    metricName: gateway_open_listen_streams
+    targetAverageValue: "500"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+affinity: {}
+nodeSelector: {}
+tolerations: []
+priorityClassName: ""
+podAnnotations: {}
+podLabels: {}
+
+# ---------------------------------------------------------------------------------------
+# NetworkPolicy. Default deny for the gateway pods, then explicit allows.
+# ---------------------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+  ingress:
+    # OpenShift router namespace. With a HostNetwork ingress controller traffic appears from
+    # the `default` namespace instead: add it under extraFrom.
+    router:
+      namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: ingress
+    # The admin API (deploy/helm/mcp-admin) calls /internal/* on 8080.
+    adminApi:
+      enabled: true
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: mcp-admin
+          app.kubernetes.io/component: api
+      # Empty = same namespace.
+      namespaceSelector: {}
+    # Prometheus: cluster monitoring and user-workload monitoring namespaces, port 9090.
+    monitoring:
+      enabled: true
+      namespaces:
+        - openshift-monitoring
+        - openshift-user-workload-monitoring
+    extraFrom: []
+  egress:
+    dns:
+      enabled: true
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: openshift-dns
+    mongo:
+      enabled: true
+      port: 27017
+      # Percona pods in this namespace by default (deploy/openshift/mongodb).
+      namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: percona-server-mongodb
+      # For Atlas or an external Mongo use ipBlocks instead (and clear podSelector).
+      ipBlocks: []
+    upstreams:
+      enabled: true
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: mcp-upstreams
+      # Empty = any port in that namespace.
+      ports: []
+    # IdP JWKS / OIDC discovery and any https upstream outside the cluster.
+    https:
+      enabled: true
+      port: 443
+      ipBlocks:
+        - cidr: 0.0.0.0/0
+          except:
+            - 10.0.0.0/8
+            - 172.16.0.0/12
+            - 192.168.0.0/16
+    otel:
+      enabled: false
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: observability
+      podSelector: {}
+      ports: [4317, 4318]
+    extraTo: []
+
+# ---------------------------------------------------------------------------------------
+# Prometheus Operator ServiceMonitor (user-workload monitoring must be enabled).
+# ---------------------------------------------------------------------------------------
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  relabelings: []

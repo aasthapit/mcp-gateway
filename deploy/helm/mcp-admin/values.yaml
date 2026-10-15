@@ -1,0 +1,172 @@
+# mcp-admin: two Deployments (api, ui) behind one Route. WP5 fills in images and env; the
+# OpenShift hygiene (restricted SCC, default-deny NetworkPolicy, ESO secrets) is already here.
+
+nameOverride: ""
+fullnameOverride: ""
+imagePullSecrets: []
+
+# Shared pod/container security settings (restricted-v2 SCC).
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]
+
+serviceAccount:
+  create: true
+  name: ""
+  automountServiceAccountToken: false
+
+terminationGracePeriodSeconds: 30
+
+# ---------------------------------------------------------------------------------------
+api:
+  enabled: true
+  image:
+    repository: ghcr.io/aasthapit/mcp-admin-api
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  port: 3001
+  # Non-secret env (plain name/value). Secrets come from `secrets`/`externalSecrets`.
+  env:
+    NODE_ENV: production
+    PORT: "3001"
+    MONGO_DB: mcp_gateway
+    OIDC_ISSUER: https://idp.example.com/realms/mcp
+    JWT_AUDIENCE: mcp-admin
+    ADMIN_ROLE: mcp-admin
+    # In-cluster gateway Service (deploy/helm/mcp-gateway); /internal/* is NetworkPolicy-gated.
+    GATEWAY_INTERNAL_URL: http://mcp-gateway.mcp-gateway.svc:8080/internal
+  extraEnv: []
+  probes:
+    readinessPath: /readyz
+    livenessPath: /healthz
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  tmpVolume:
+    sizeLimit: 32Mi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+ui:
+  enabled: true
+  image:
+    repository: ghcr.io/aasthapit/mcp-admin-ui
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  port: 3000
+  env:
+    PORT: "3000"
+    # Same-origin: the Route sends /api to the api Service.
+    API_BASE_URL: /api
+  extraEnv: []
+  probes:
+    readinessPath: /
+    livenessPath: /
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+  tmpVolume:
+    sizeLimit: 32Mi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+# ---------------------------------------------------------------------------------------
+secrets:
+  env:
+    name: "" # default <fullname>-api-env (MONGO_URI, GATEWAY_INTERNAL_TOKEN)
+  create: false # DEV ONLY plain Secret from values
+  values:
+    mongoUri: ""
+    internalToken: ""
+
+externalSecrets:
+  enabled: true
+  apiVersion: external-secrets.io/v1
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  data:
+    - secretKey: MONGO_URI
+      remoteRef: { key: mcp-admin/mongo, property: uri }
+    - secretKey: GATEWAY_INTERNAL_TOKEN
+      remoteRef: { key: mcp-gateway/internal, property: token }
+
+mongoCA:
+  enabled: true
+  secretName: mcp-mongo-ssl
+  key: ca.crt
+  mountPath: /etc/admin/mongo-ca
+
+# ---------------------------------------------------------------------------------------
+route:
+  enabled: true
+  host: admin.example.com
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  annotations:
+    haproxy.router.openshift.io/timeout: 60s
+  # The api Route is the same host with path /api.
+  apiPath: /api
+
+networkPolicy:
+  enabled: true
+  ingress:
+    router:
+      namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: ingress
+    extraFrom: []
+  egress:
+    dns:
+      enabled: true
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: openshift-dns
+    mongo:
+      enabled: true
+      port: 27017
+      namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: percona-server-mongodb
+      ipBlocks: []
+    gateway:
+      enabled: true
+      port: 8080
+      # Gateway pods (deploy/helm/mcp-gateway), same namespace by default.
+      namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: mcp-gateway
+    https:
+      enabled: true
+      port: 443
+      ipBlocks:
+        - cidr: 0.0.0.0/0
+          except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+    extraTo: []
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}

@@ -1,0 +1,12 @@
+api:
+  image: { tag: "0.1.0", digest: "" }
+  replicaCount: 2
+  env:
+    OIDC_ISSUER: https://idp.example.com/realms/mcp
+ui:
+  image: { tag: "0.1.0", digest: "" }
+  replicaCount: 2
+externalSecrets:
+  enabled: true
+route:
+  host: admin.example.com

@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+data:
+  {{- /* Fixed by the image/Service wiring; not overridable through config.* */}}
+  GATEWAY_HOST: "0.0.0.0"
+  GATEWAY_PORT: {{ .Values.containerPort | quote }}
+  GATEWAY_METRICS_PORT: {{ .Values.metricsContainerPort | quote }}
+  GATEWAY_PUBLIC_BASE_URL: {{ include "mcp-gateway.publicBaseUrl" . | quote }}
+  GATEWAY_ALLOWED_HOSTS: {{ include "mcp-gateway.allowedHosts" . | quote }}
+  {{- range $k, $v := .Values.config }}
+  {{- if and (ne $k "PUBLIC_BASE_URL") (ne $k "ALLOWED_HOSTS") (ne (toString $v) "") }}
+  GATEWAY_{{ $k }}: {{ toString $v | quote }}
+  {{- end }}
+  {{- end }}
+  {{- if ne (toString .Values.config.TELEMETRY_MODE) "off" }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.telemetry.otlpEndpoint | quote }}
+  OTEL_SERVICE_NAME: {{ .Values.telemetry.serviceName | quote }}
+  {{- end }}

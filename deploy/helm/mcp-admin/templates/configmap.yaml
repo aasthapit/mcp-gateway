@@ -1,0 +1,18 @@
+{{- range $component := list "api" "ui" }}
+{{- $c := index $.Values $component }}
+{{- if $c.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-admin.fullname" $ }}-{{ $component }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "mcp-admin.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+data:
+  {{- range $k, $v := $c.env }}
+  {{ $k }}: {{ toString $v | quote }}
+  {{- end }}
+---
+{{- end }}
+{{- end }}

@@ -1,0 +1,84 @@
+# ApplicationSet: both charts x {dev, staging, prod}. Each environment is a cluster (or a
+# namespace on a shared cluster) and a values overlay. Staging layers values-staging.yaml on
+# top of values-prod.yaml so it keeps the prod shape (ESO, HPA, PDB, ServiceMonitor).
+#   oc apply -n openshift-gitops -f deploy/openshift/argocd/applicationset.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: mcp
+  namespace: openshift-gitops
+  labels:
+    app.kubernetes.io/part-of: mcp-gateway
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - chart: mcp-gateway
+                - chart: mcp-admin
+          - list:
+              elements:
+                - env: dev
+                  server: https://kubernetes.default.svc
+                  revision: main
+                  valueFiles: [values.yaml, values-dev.yaml]
+                  autoSync: true
+                - env: staging
+                  server: https://api.staging.example.com:6443
+                  revision: main
+                  valueFiles: [values.yaml, values-prod.yaml, values-staging.yaml]
+                  autoSync: true
+                - env: prod
+                  server: https://api.prod.example.com:6443
+                  # Prod tracks a tag/branch promoted by the pipeline, not main.
+                  revision: release
+                  valueFiles: [values.yaml, values-prod.yaml]
+                  autoSync: false
+  template:
+    metadata:
+      name: "{{ .chart }}-{{ .env }}"
+      labels:
+        app.kubernetes.io/part-of: mcp-gateway
+        env: "{{ .env }}"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/aasthapit/mcp-gateway.git
+        targetRevision: "{{ .revision }}"
+        path: "deploy/helm/{{ .chart }}"
+        helm:
+          releaseName: "{{ .chart }}"
+          # valueFiles (a list per env) and automated sync are added by templatePatch below:
+          # the template itself must stay valid YAML.
+      destination:
+        server: "{{ .server }}"
+        namespace: mcp-gateway
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=false
+          - ServerSideApply=true
+          - ApplyOutOfSyncOnly=true
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          jsonPointers:
+            - /spec/replicas
+  templatePatch: |
+    spec:
+      source:
+        helm:
+          valueFiles:
+            {{- range .valueFiles }}
+            - {{ . }}
+            {{- end }}
+      {{- if .autoSync }}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+      {{- end }}

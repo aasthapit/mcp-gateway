@@ -1,0 +1,64 @@
+# Namespaces for the MCP gateway platform. Apply once per cluster (cluster-admin):
+#   oc apply -f deploy/openshift/namespaces/namespaces.yaml
+#
+# mcp-gateway:   gateway + admin charts, the Percona MongoDB cluster, ExternalSecrets.
+# mcp-upstreams: upstream MCP servers the gateway proxies. The gateway NetworkPolicy allows
+#                egress to this namespace by its kubernetes.io/metadata.name label.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-gateway
+  labels:
+    app.kubernetes.io/part-of: mcp-gateway
+    # Pod Security Admission: restricted profile, enforced (OpenShift 4.16+ default is
+    # warn/audit; enforcing it here means a non-compliant pod is rejected at admission).
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    # Lets Argo CD (OpenShift GitOps) manage objects here.
+    argocd.argoproj.io/managed-by: openshift-gitops
+  annotations:
+    openshift.io/description: MCP gateway, admin API/UI and policy store (MongoDB)
+    openshift.io/display-name: MCP gateway
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-upstreams
+  labels:
+    app.kubernetes.io/part-of: mcp-gateway
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    argocd.argoproj.io/managed-by: openshift-gitops
+  annotations:
+    openshift.io/description: Upstream MCP servers proxied by the gateway
+    openshift.io/display-name: MCP upstreams
+---
+# Upstreams accept traffic only from the gateway pods; everything else is denied.
+# (Add per-upstream egress policies in the upstream's own chart.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: mcp-upstreams
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-mcp-gateway
+  namespace: mcp-upstreams
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mcp-gateway
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mcp-gateway

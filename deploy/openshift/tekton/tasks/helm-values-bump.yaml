@@ -1,0 +1,66 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: helm-values-bump
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/part-of: mcp-gateway
+spec:
+  description: Set image.tag and image.digest in a chart values file and push the commit (GitOps handoff to Argo CD).
+  params:
+    - name: values-file
+      type: string
+    - name: tag
+      type: string
+    - name: digest
+      type: string
+    - name: branch
+      type: string
+    - name: commit-message
+      type: string
+    - name: yq-image
+      type: string
+      default: docker.io/mikefarah/yq:4.52.1
+    - name: git-image
+      type: string
+      default: registry.redhat.io/rhel9/toolbox:latest
+  workspaces:
+    - name: source
+    - name: git-credentials
+      optional: true
+  steps:
+    - name: yq
+      image: $(params.yq-image)
+      workingDir: $(workspaces.source.path)
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities: { drop: [ALL] }
+      script: |
+        #!/bin/sh
+        set -eu
+        yq -i '.image.tag = "$(params.tag)" | .image.digest = "$(params.digest)"' "$(params.values-file)"
+        yq '.image' "$(params.values-file)"
+    - name: push
+      image: $(params.git-image)
+      workingDir: $(workspaces.source.path)
+      env:
+        - { name: HOME, value: /tmp }
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities: { drop: [ALL] }
+      script: |
+        #!/bin/sh
+        set -eu
+        if [ "$(workspaces.git-credentials.bound)" = "true" ]; then
+          cp "$(workspaces.git-credentials.path)/.git-credentials" /tmp/.git-credentials
+          cp "$(workspaces.git-credentials.path)/.gitconfig" /tmp/.gitconfig
+        fi
+        git config user.name  "openshift-pipelines"
+        git config user.email "pipelines@mcp-gateway.local"
+        git fetch origin "$(params.branch)" || true
+        git checkout -B "$(params.branch)" "origin/$(params.branch)" 2>/dev/null || git checkout -B "$(params.branch)"
+        git add "$(params.values-file)"
+        git commit -m "$(params.commit-message)" || { echo "nothing to commit"; exit 0; }
+        git push origin "HEAD:$(params.branch)"

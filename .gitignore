@@ -27,3 +27,7 @@ local/.mongo-keyfile
 
 # Review surfaces (lavish-axi) and scratch
 .lavish/
+
+# deploy/ validation artefacts (make deploy-check)
+deploy/.render/
+deploy/kubeconform/cache/

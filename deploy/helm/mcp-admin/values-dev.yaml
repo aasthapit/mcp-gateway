@@ -1,0 +1,24 @@
+api:
+  image: { tag: dev, pullPolicy: Always }
+  replicaCount: 1
+  env:
+    NODE_ENV: development
+    OIDC_ISSUER: https://keycloak-dev.apps.example.com/realms/mcp
+  podDisruptionBudget: { enabled: false }
+ui:
+  image: { tag: dev, pullPolicy: Always }
+  replicaCount: 1
+  podDisruptionBudget: { enabled: false }
+externalSecrets:
+  enabled: false
+secrets:
+  create: true
+  values:
+    mongoUri: mongodb://admin-api:CHANGE-ME@mcp-mongo-rs0.mcp-gateway.svc.cluster.local:27017/mcp_gateway?replicaSet=rs0&tls=true&tlsCAFile=/etc/admin/mongo-ca/ca.crt
+    internalToken: dev-internal-token-change-me
+route:
+  host: ""
+networkPolicy:
+  egress:
+    https:
+      ipBlocks: [{ cidr: 0.0.0.0/0 }]

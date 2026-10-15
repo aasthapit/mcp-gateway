@@ -1,0 +1,37 @@
+# Example run. Secrets: `registry-dockerconfig` (kubernetes.io/dockerconfigjson for the
+# internal + release registries), `git-push-credentials` (.git-credentials + .gitconfig).
+#   oc create -n mcp-gateway -f deploy/openshift/tekton/pipelinerun.example.yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: mcp-gateway-build-
+  namespace: mcp-gateway
+spec:
+  pipelineRef:
+    name: mcp-gateway-build
+  params:
+    - { name: git-revision, value: main }
+    - { name: version, value: "0.1.0" }
+  timeouts:
+    pipeline: 45m
+  taskRunTemplate:
+    serviceAccountName: pipeline
+    podTemplate:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 2Gi
+    - name: dockerconfig
+      secret:
+        secretName: registry-dockerconfig
+    - name: git-credentials
+      secret:
+        secretName: git-push-credentials

@@ -1,0 +1,31 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: gateway-test
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/part-of: mcp-gateway
+spec:
+  description: Unit tests + lint for gateway/ with uv (integration tests need the local stack and are skipped).
+  workspaces:
+    - name: source
+  steps:
+    - name: pytest
+      image: registry.access.redhat.com/ubi9/python-312:latest
+      workingDir: $(workspaces.source.path)/gateway
+      env:
+        - { name: UV_CACHE_DIR, value: /tmp/uv-cache }
+        - { name: UV_PYTHON_DOWNLOADS, value: never }
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities: { drop: [ALL] }
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        pip install --quiet --user uv==0.11.24
+        export PATH="$HOME/.local/bin:$PATH"
+        uv sync --frozen
+        uv run ruff check .
+        uv run ruff format --check .
+        uv run pytest -m "not integration" -q

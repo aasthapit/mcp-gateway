@@ -1,0 +1,2 @@
+# Loaded with `conftest test --data` for prod renders: a chart-rendered Secret is a finding.
+prod_render: true

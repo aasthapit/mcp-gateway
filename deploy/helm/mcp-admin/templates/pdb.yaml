@@ -1,0 +1,19 @@
+{{- range $component := list "api" "ui" }}
+{{- $c := index $.Values $component }}
+{{- if and $c.enabled $c.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mcp-admin.fullname" $ }}-{{ $component }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "mcp-admin.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  minAvailable: {{ $c.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "mcp-admin.selectorLabels" (dict "ctx" $ "component" $component) | nindent 6 }}
+---
+{{- end }}
+{{- end }}

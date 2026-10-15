@@ -10,16 +10,16 @@ model, work packages and open decisions. Research notes live in [docs/research](
 
 ## Layout
 
-| Directory           | What                                                          | Work package |
-| ------------------- | ------------------------------------------------------------- | ------------ |
-| `gateway/`          | FastMCP gateway (Python, uv)                                  | WP1–WP4, WP7 |
-| `admin-api/`        | Fastify admin API                                             | WP5          |
-| `admin-ui/`         | React admin UI                                                | WP5          |
-| `schemas/`          | JSON Schema source of truth → Mongo validators, ajv, pydantic | WP0          |
-| `sample-upstreams/` | Two tiny FastMCP servers for local dev and e2e                | WP0          |
-| `local/`            | compose stack: Mongo replica set, Keycloak, upstreams, seed   | WP0          |
-| `deploy/`           | Helm charts, OpenShift manifests, Argo CD app                 | WP6          |
-| `docs/`             | plan, research, ADRs, runbook                                 | –            |
+| Directory           | What                                                           | Work package |
+| ------------------- | -------------------------------------------------------------- | ------------ |
+| `gateway/`          | FastMCP gateway (Python, uv)                                   | WP1–WP4, WP7 |
+| `admin-api/`        | Fastify admin API                                              | WP5          |
+| `admin-ui/`         | React admin UI                                                 | WP5          |
+| `schemas/`          | JSON Schema source of truth → Mongo validators, ajv, pydantic  | WP0          |
+| `sample-upstreams/` | Two tiny FastMCP servers for local dev and e2e                 | WP0          |
+| `local/`            | compose stack: Mongo replica set, Keycloak, upstreams, seed    | WP0          |
+| `deploy/`           | Helm charts, OpenShift manifests, Argo CD app, Tekton pipeline | WP6          |
+| `docs/`             | plan, research, ADRs, runbook                                  | –            |
 
 ## Local development
 
@@ -47,4 +47,5 @@ make lint
 
 CI (`.github/workflows/ci.yml`) runs the same hooks, rebuilds the Mongo validators from
 `schemas/` and fails if `local/mongo-init/validators.js` is stale, validates the seed
-documents, and checks `local/compose.yaml`.
+documents, checks `local/compose.yaml`, and runs `make deploy-check` (Helm lint/template,
+kubeconform, restricted-SCC policy) for [deploy/](deploy/README.md).
