@@ -15,14 +15,15 @@ def test_app_routes_and_middleware_order(settings: Settings) -> None:
         if type(m).__name__ != "DereferenceRefsMiddleware"
     ]
     assert names == [
+        "SpanAttributesMiddleware",
+        "PrincipalRateLimitingMiddleware",
         "PolicyMiddleware",
         "AuditMiddleware",
         "MetricsMiddleware",
+        "CountingResponseLimitingMiddleware",
         "ErrorHandlingMiddleware",
     ]
-    assert isinstance(gw.mcp.middleware[1], PolicyMiddleware) or isinstance(
-        gw.mcp.middleware[0], PolicyMiddleware
-    )
+    assert any(isinstance(m, PolicyMiddleware) for m in gw.mcp.middleware)
     assert gw.registry.namespaces == ("sample-public", "sample-private")
     assert gw.registry.namespace_of("sample-public_echo") == "sample-public"
     assert gw.registry.namespace_of("nope") == "unknown"

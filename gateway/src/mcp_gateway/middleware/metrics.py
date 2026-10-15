@@ -95,6 +95,39 @@ UPSTREAM_ERRORS = Counter(
 UPSTREAMS_MOUNTED = Gauge(
     "gateway_upstreams_mounted", "Number of upstreams currently mounted on the gateway."
 )
+POLICY_STALENESS = Gauge(
+    "gateway_policy_staleness_seconds",
+    "Seconds since the store last confirmed the in-memory snapshot is current (a load, or "
+    "a version poll that matched). Unlike gateway_policy_age_seconds it does not grow "
+    "while nothing changes; it grows when Mongo cannot be read.",
+)
+OPEN_LISTEN_STREAMS = Gauge(
+    "gateway_open_listen_streams", "subscriptions/listen streams currently open on this pod."
+)
+RATE_LIMITED = Counter(
+    "gateway_rate_limited_total",
+    "MCP requests rejected by the per-pod rate limiter.",
+    ["principal_kind"],
+)
+for _kind in ("anonymous", "user"):
+    RATE_LIMITED.labels(_kind)
+RESPONSE_TRUNCATED = Counter(
+    "gateway_response_truncated_total",
+    "tools/call results truncated because they exceeded GATEWAY_RESPONSE_MAX_BYTES.",
+    ["upstream"],
+)
+REQUEST_BODY_REJECTED = Counter(
+    "gateway_request_body_rejected_total",
+    "HTTP requests answered 413 because the body exceeded GATEWAY_MAX_REQUEST_BODY_BYTES.",
+)
+HTTP_RESPONSES = Counter(
+    "gateway_http_responses_total",
+    "HTTP responses by route group (mcp|internal|probe|other) and status class (2xx..5xx).",
+    ["route", "code"],
+)
+for _route in ("mcp", "internal"):
+    for _code in ("2xx", "4xx", "5xx"):
+        HTTP_RESPONSES.labels(_route, _code)
 BUILD_INFO = Gauge("gateway_build_info", "Gateway build information.", ["version"])
 BUILD_INFO.labels(version=__version__).set(1)
 

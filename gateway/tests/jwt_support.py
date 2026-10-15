@@ -31,6 +31,7 @@ class FakeIdp:
         self.jwks_fetches = 0
         self.discovery_fetches = 0
         self.jwks_status = 200
+        self.jwks_hang = False  # True: accept the JWKS request and never answer (blackhole)
         self.discovery_issuer = self.issuer  # what the discovery document claims
         self.add_key("k1")
         self.app = Starlette(
@@ -61,6 +62,10 @@ class FakeIdp:
 
     async def _jwks(self, request: Request) -> JSONResponse:
         self.jwks_fetches += 1
+        if self.jwks_hang:
+            import anyio
+
+            await anyio.sleep(3600)
         if self.jwks_status != 200:
             return JSONResponse({"error": "down"}, status_code=self.jwks_status)
         return JSONResponse(self.jwks())

@@ -2,18 +2,22 @@
 
 Layout of the ASGI app::
 
+    HttpGuardMiddleware (http_guards.py: client IP, max body 413, HTTP status metrics,
+                         traceparent)
     Starlette (outer)
       /healthz, /readyz, /metrics, /.well-known/oauth-protected-resource[/mcp]  (plain routes)
-      /healthz, /readyz, /metrics, /.well-known/oauth-protected-resource   (plain routes)
       /internal/catalog, /internal/upstreams/*, /internal/effective-tools   (token-guarded)
       Mount("/")  ->  FastMCP http_app(path=/mcp, stateless_http=True)
                         HostOriginGuard -> BearerAuthMiddleware (auth/asgi.py) -> MCP transport
-                          FastMCP middleware: Policy -> Audit -> Metrics -> ErrorHandling
+                          FastMCP middleware: SpanAttributes -> RateLimiting -> Policy ->
+                            Audit -> Metrics -> ResponseLimiting -> ErrorHandling
 
 The outer app's lifespan drives the FastMCP app's lifespan, starts the policy watcher
 (initial load, then change stream + poll), mounts the upstreams (from the policy snapshot
 when both come from Mongo), starts the upstream health probe and flips readiness
-afterwards. The SDK ``ListenHandler`` is registered on the low-level server (ADR 0003) so
+afterwards. On SIGTERM :meth:`Gateway.begin_drain` (called by ``main.GatewayServer``)
+flips readiness to draining and closes the listen streams gracefully before uvicorn
+waits for in-flight requests. The SDK ``ListenHandler`` is registered on the low-level server (ADR 0003) so
 modern clients can open ``subscriptions/listen`` and receive ``tools/list_changed`` after
 a policy reload.
 """
@@ -30,6 +34,7 @@ from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler
 from mcp_types import SubscriptionsListenRequestParams
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest, start_http_server
+from sse_starlette.sse import AppStatus
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -42,15 +47,26 @@ from mcp_gateway.auth.jwt import JwtAuth
 from mcp_gateway.auth.metadata import metadata_routes
 from mcp_gateway.debug_tools import DEBUG_TOOL_NAMES, register_debug_tools
 from mcp_gateway.health import Readiness, healthz, make_readyz
+from mcp_gateway.http_guards import HttpGuardMiddleware
 from mcp_gateway.internal_routes import build_internal_routes
 from mcp_gateway.middleware.audit import AuditMiddleware
-from mcp_gateway.middleware.metrics import UPSTREAM_ERRORS, MetricsMiddleware
+from mcp_gateway.middleware.limits import (
+    CountingResponseLimitingMiddleware,
+    PrincipalRateLimitingMiddleware,
+)
+from mcp_gateway.middleware.metrics import OPEN_LISTEN_STREAMS, UPSTREAM_ERRORS, MetricsMiddleware
+from mcp_gateway.middleware.tracing import SpanAttributesMiddleware
 from mcp_gateway.policy.middleware import PolicyMiddleware
 from mcp_gateway.policy.snapshot import PolicySnapshot
 from mcp_gateway.policy.store import MongoPolicyStore, PolicyStore, StaticPolicyStore
 from mcp_gateway.policy.watcher import PolicyHolder, PolicyWatcher
 from mcp_gateway.settings import Settings, load_settings
-from mcp_gateway.telemetry import configure_logging, get_logger
+from mcp_gateway.telemetry import (
+    configure_logging,
+    configure_tracing,
+    get_logger,
+    shutdown_tracing,
+)
 from mcp_gateway.upstreams.models import UpstreamHealth
 from mcp_gateway.upstreams.registry import UpstreamRegistry
 from mcp_gateway.upstreams.source import UpstreamSource, make_upstream_source
@@ -76,7 +92,7 @@ class Gateway:
     upstream_source: UpstreamSource
     policy: PolicyHolder = field(default_factory=PolicyHolder)
     bus: InMemorySubscriptionBus = field(default_factory=InMemorySubscriptionBus)
-    listen_handler: ListenHandler | None = None
+    listen_handler: GatewayListenHandler | None = None
     watcher: PolicyWatcher | None = None
     app: Starlette | None = None
 
@@ -88,6 +104,19 @@ class Gateway:
     def set_snapshot(self, snapshot: PolicySnapshot) -> None:
         """Atomic swap; the watcher uses :meth:`PolicyWatcher.reload`, tests use this."""
         self.policy.swap(snapshot)
+
+    def begin_drain(self) -> None:
+        """Start of graceful shutdown (SIGTERM): not ready any more, and every open
+        ``subscriptions/listen`` stream gets its final ``SubscriptionsListenResult`` so
+        clients re-listen elsewhere. In-flight requests keep running; uvicorn waits for
+        them up to ``GATEWAY_SHUTDOWN_GRACE_SEC``. Idempotent."""
+        if self.readiness.draining:
+            return
+        self.readiness.draining = True
+        open_streams = self.listen_handler.open_streams if self.listen_handler else 0
+        log.info("draining: readiness off, closing listen streams", listen_streams=open_streams)
+        if self.listen_handler is not None:
+            self.listen_handler.close()
 
     async def reload_upstreams(self) -> Mapping[str, UpstreamHealth]:
         """Re-read the desired upstream list and reconcile the registry.
@@ -102,6 +131,14 @@ class Gateway:
             return self.registry.health()
         desired = await self.upstream_source.load()
         return await self.registry.apply_configs(desired)
+
+
+class GatewayListenHandler(ListenHandler):
+    """The SDK listen handler plus a stream count (``gateway_open_listen_streams``)."""
+
+    @property
+    def open_streams(self) -> int:
+        return len(self._streams)
 
 
 def policy_store_from_settings(settings: Settings) -> PolicyStore:
@@ -127,6 +164,11 @@ def build_gateway(
     """
     settings = settings or load_settings()
     configure_logging(settings)
+    # sse-starlette ends every SSE response the moment uvicorn sees SIGTERM, which would
+    # cut in-flight tool calls answered over SSE. The gateway drains itself instead
+    # (Gateway.begin_drain closes listen streams; uvicorn waits for the rest).
+    AppStatus.disable_automatic_graceful_drain()
+    configure_tracing(settings, __version__)
     jwt_auth = jwt_auth or JwtAuth(settings)
 
     mcp = FastMCP(
@@ -140,7 +182,8 @@ def build_gateway(
     )
     registry = UpstreamRegistry(mcp, settings=settings)
     bus = InMemorySubscriptionBus()
-    listen_handler = ListenHandler(bus)
+    listen_handler = GatewayListenHandler(bus)
+    OPEN_LISTEN_STREAMS.set_function(lambda: listen_handler.open_streams)
     # FastMCP 4.1 does not serve subscriptions/listen itself (ADR 0003); the SDK handler
     # works unchanged in stateless mode and advertises tools.listChanged=true.
     mcp._mcp_server.add_request_handler(
@@ -168,10 +211,29 @@ def build_gateway(
     # Dev-only gateway-local tools bypass the allow-list; it governs upstream tools.
     debug_tool_names = DEBUG_TOOL_NAMES if settings.env == "dev" else frozenset()
     mcp.add_middleware(
+        SpanAttributesMiddleware(gateway.policy.get, upstream_of=registry.namespace_of)
+    )
+    if settings.rate_limit_enabled:
+        mcp.add_middleware(
+            PrincipalRateLimitingMiddleware(
+                anonymous_rps=settings.rate_limit_anonymous_rps,
+                anonymous_burst=settings.rate_limit_anonymous_burst,
+                user_rps=settings.rate_limit_user_rps,
+                user_burst=settings.rate_limit_user_burst,
+                max_keys=settings.rate_limit_max_keys,
+            )
+        )
+    mcp.add_middleware(
         PolicyMiddleware(snapshot_provider=gateway.policy.get, exempt=debug_tool_names)
     )
     mcp.add_middleware(AuditMiddleware(upstream_of=registry.namespace_of))
     mcp.add_middleware(MetricsMiddleware(upstream_of=registry.namespace_of))
+    if settings.response_max_bytes:
+        mcp.add_middleware(
+            CountingResponseLimitingMiddleware(
+                max_size=settings.response_max_bytes, upstream_of=registry.namespace_of
+            )
+        )
     mcp.add_middleware(ErrorHandlingMiddleware(include_traceback=not settings.is_prod))
 
     if settings.upstreams_source == "static":
@@ -246,12 +308,14 @@ def build_gateway(
                 yield {"gateway": gateway}
             finally:
                 gateway.readiness.started = False
-                listen_handler.close()  # graceful close of open listen streams
+                gateway.begin_drain()  # no-op when main.GatewayServer already drained
                 await watcher.stop()
                 await registry.stop()
                 await gateway.upstream_source.close()
                 if metrics_server is not None:
                     metrics_server.shutdown()
+                shutdown_tracing()
+                log.info("gateway stopped")
 
     async def metrics(request: Request) -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
@@ -266,6 +330,15 @@ def build_gateway(
             Mount("/", app=mcp_app),
         ],
         lifespan=lifespan,
+        middleware=[
+            Middleware(
+                HttpGuardMiddleware,
+                max_body_bytes=settings.max_request_body_bytes,
+                trusted_proxies=settings.trusted_proxies,
+                mcp_path=settings.mcp_path,
+                propagate_trace=settings.telemetry_mode != "off",
+            )
+        ],
     )
     app.state.gateway = gateway
     gateway.app = app

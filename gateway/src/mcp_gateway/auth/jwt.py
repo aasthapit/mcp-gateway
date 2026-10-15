@@ -70,6 +70,7 @@ class GatewayJWTVerifier(JWTVerifier):
         algorithms: list[str],
         clock_skew_sec: int = 30,
         jwks_refresh_floor_sec: float = 300.0,
+        jwks_fetch_timeout_sec: float = 3.0,
         http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         if not algorithms:
@@ -88,6 +89,7 @@ class GatewayJWTVerifier(JWTVerifier):
         self.algorithms = list(algorithms)
         self.clock_skew = float(clock_skew_sec)
         self.jwks_refresh_floor = float(jwks_refresh_floor_sec)
+        self.jwks_fetch_timeout = float(jwks_fetch_timeout_sec)
         self._registry = JWSRegistry(algorithms=self.algorithms, strict_check_header=False)
         self._last_refresh_ok: float | None = None
         self._last_refresh_failed: float | None = None
@@ -116,6 +118,13 @@ class GatewayJWTVerifier(JWTVerifier):
         """
         if (key := self._cached_key(kid, allow_stale=False)) is not None:
             return key
+        if (
+            self._jwks_refresh_lock.locked()
+            and (stale := self._cached_key(kid, allow_stale=True)) is not None
+        ):
+            # Another request is refreshing (maybe against an unreachable IdP): a known
+            # key keeps verifying instead of queueing behind that fetch.
+            return stale
         async with self._jwks_refresh_lock:
             if (key := self._cached_key(kid, allow_stale=False)) is not None:
                 return key
@@ -155,6 +164,23 @@ class GatewayJWTVerifier(JWTVerifier):
             finally:
                 if self._jwks_cache_time != cache_time_before:
                     self._last_refresh_ok = time.monotonic()
+
+    async def _fetch_jwks(self) -> dict[str, Any]:
+        """FastMCP's fetch, bounded by ``jwks_fetch_timeout`` (theirs is 10 s per phase).
+
+        A timeout surfaces as ``httpx2.TimeoutException`` so the refresh path treats it like
+        any other failed fetch (backoff, stale key for known ``kid``, 401 otherwise)."""
+        try:
+            with anyio.fail_after(self.jwks_fetch_timeout):
+                if self._http_client is not None:
+                    return await super()._fetch_jwks()
+                timeout = httpx2.Timeout(self.jwks_fetch_timeout)
+                async with httpx2.AsyncClient(timeout=timeout) as client:
+                    response = await client.get(self.jwks_uri)
+                    response.raise_for_status()
+                    return response.json()
+        except TimeoutError as exc:
+            raise httpx2.ReadTimeout(f"JWKS fetch exceeded {self.jwks_fetch_timeout:g}s") from exc
 
     # -- verification ----------------------------------------------------------------------
 
@@ -315,6 +341,7 @@ class JwtAuth:
             algorithms=s.jwt_algorithms,
             clock_skew_sec=s.jwt_clock_skew_sec,
             jwks_refresh_floor_sec=s.jwks_refresh_floor_sec,
+            jwks_fetch_timeout_sec=s.jwks_fetch_timeout_sec,
             http_client=self.http_client,
         )
         self.verifier, self.jwks_uri, self.last_error = verifier, jwks_uri, None

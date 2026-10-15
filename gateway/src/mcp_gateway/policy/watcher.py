@@ -12,7 +12,9 @@ immutable snapshots into it.
   full reload, an atomic swap, ``registry.apply`` for new upstreams, and a
   ``ToolsListChanged`` publish on the subscription bus so this pod's open
   ``subscriptions/listen`` streams get ``notifications/tools/list_changed`` (ADR 0003),
-* metrics: ``gateway_policy_version``, ``gateway_policy_age_seconds`` (live gauge),
+* metrics: ``gateway_policy_version``, ``gateway_policy_age_seconds`` (live gauge, since
+  the last swap), ``gateway_policy_staleness_seconds`` (since the store last confirmed
+  the snapshot is current: the alerting signal),
   ``gateway_policy_reloads_total{reason}``, ``gateway_policy_reload_failures_total``;
   ``gateway_change_stream_up`` is owned by the store,
 * readiness: ``policy`` (critical: a snapshot is loaded; reports ``policy_age_seconds``
@@ -24,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -35,6 +38,7 @@ from mcp_gateway.middleware.metrics import (
     POLICY_AGE,
     POLICY_RELOAD_FAILURES,
     POLICY_RELOADS,
+    POLICY_STALENESS,
     POLICY_VERSION,
 )
 from mcp_gateway.policy.snapshot import PolicySnapshot, empty_snapshot
@@ -107,6 +111,7 @@ class PolicyWatcher:
         """Initial load (one attempt here, retried by the task), then start watching."""
         self._register_probes()
         POLICY_AGE.set_function(lambda: self.holder.snapshot.age_seconds)
+        POLICY_STALENESS.set_function(self.staleness_seconds)
         try:
             await self.reload("initial")
         except Exception as exc:
@@ -126,6 +131,16 @@ class PolicyWatcher:
         if close is not None:
             with contextlib.suppress(Exception):
                 await close()
+
+    def staleness_seconds(self) -> float:
+        """Seconds since the store last confirmed the snapshot (stores without that notion,
+        e.g. the static one, are never stale once loaded)."""
+        if not self.holder.loaded:
+            return float("inf")
+        verified = getattr(self.store, "verified_at", None)
+        if not isinstance(verified, float):
+            return 0.0
+        return max(0.0, time.monotonic() - verified)
 
     @property
     def running(self) -> bool:
@@ -254,6 +269,9 @@ class PolicyWatcher:
             "loaded": self.holder.loaded,
             "version": snap.version,
             "policy_age_seconds": round(snap.age_seconds, 3) if self.holder.loaded else None,
+            "policy_staleness_seconds": (
+                round(self.staleness_seconds(), 3) if self.holder.loaded else None
+            ),
             "reloads": self.reloads,
             "last_reload_at": self.last_reload_at.isoformat() if self.last_reload_at else None,
             "last_reload_reason": self.last_reload_reason,

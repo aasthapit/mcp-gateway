@@ -224,3 +224,34 @@ async def test_jwt_auth_prod_startup_is_fatal(idp: FakeIdp) -> None:
     )
     with pytest.raises(RuntimeError, match="discovery failed"):
         await JwtAuth(s, http_client=idp.client()).startup()
+
+
+async def test_known_kid_does_not_queue_behind_a_hanging_refresh(idp: FakeIdp) -> None:
+    """IdP blackholed: an unknown kid waits for one bounded fetch; known keys never wait."""
+    import anyio
+
+    v = make_verifier(idp, jwks_refresh_floor_sec=0, jwks_fetch_timeout_sec=0.5)
+    await v.verify(idp.token("k1"))
+    v._jwks_cache_time -= v._cache_ttl + 1  # stale, so the next unknown kid refreshes
+
+    idp.jwks_hang = True
+    idp.add_key("k2")
+    t0 = time.monotonic()
+    async with anyio.create_task_group() as tg:
+        result: dict[str, object] = {}
+
+        async def unknown() -> None:
+            result["unknown"] = await reason(v, idp.token("k2"))
+            result["unknown_sec"] = time.monotonic() - t0
+
+        async def known() -> None:
+            await anyio.sleep(0.05)  # the refresh holds the lock now
+            await v.verify(idp.token("k1"))
+            result["known_sec"] = time.monotonic() - t0
+
+        tg.start_soon(unknown)
+        tg.start_soon(known)
+    assert result["unknown"] == "jwks_unavailable"
+    assert 0.4 < result["unknown_sec"] < 2.0  # waited for the fetch timeout, not 10 s
+    assert idp.jwks_fetches == 2
+    assert result["known_sec"] < 0.4  # served from the stale cache while the fetch hung

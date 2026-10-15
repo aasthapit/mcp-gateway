@@ -10,6 +10,9 @@ dependencies = [
     "prometheus-client>=0.22",
     "structlog>=25.1",
     "pymongo>=4.13",
+    "opentelemetry-sdk>=1.45",
+    "opentelemetry-exporter-otlp-proto-http>=1.45",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.45",
 ]
 
 [project.scripts]
