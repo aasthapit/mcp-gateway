@@ -4,7 +4,12 @@
 #   2. helm template -> deploy/.render/<chart>-<env>.yaml
 #   3. kubeconform (strict) against core schemas + the CRD cache (kubeconform/fetch-schemas.sh)
 #   4. conftest restricted-SCC policy (deploy/policy) on every render and on deploy/openshift
-#   5. kube-score (advisory unless KUBE_SCORE_STRICT=1) when installed
+#   5. promtool: the gateway's PrometheusRule (prod render) checked and unit-tested against
+#      deploy/alerts/alerts_test.yaml, when promtool is installed (brew install prometheus;
+#      PROMTOOL_STRICT=1 makes a missing promtool fatal)
+#   6. kube-score per render (advisory unless KUBE_SCORE_STRICT=1) when installed; per
+#      render so one environment's objects are never scored against another's (a dev
+#      Deployment's replicas next to the prod HPA of the same name)
 # Needs: helm, kubeconform, conftest (brew install helm kubeconform conftest).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -74,6 +79,21 @@ conftest test --policy "$here/policy" --data "$here/policy/data-dev.yaml" --no-c
   "$here"/openshift/namespaces "$here"/openshift/mongodb "$here"/openshift/argocd "$here"/openshift/tekton
 conftest verify --policy "$here/policy" --no-color
 
+if command -v promtool >/dev/null; then
+  echo "== promtool (gateway alerts)"
+  mkdir -p "$render/alerts"
+  # The rule groups are the PrometheusRule's spec, one indent level up.
+  sed -n '/^spec:/,$p' <(helm template mcp-gateway "$here/helm/mcp-gateway" -n "$NAMESPACE" \
+    -f "$here/helm/mcp-gateway/values-prod.yaml" --show-only templates/prometheusrule.yaml) |
+    sed '1d; s/^  //' >"$render/alerts/mcp-gateway.rules.yaml"
+  promtool check rules "$render/alerts/mcp-gateway.rules.yaml"
+  promtool test rules "$here/alerts/alerts_test.yaml"
+elif [ "${PROMTOOL_STRICT:-0}" = "1" ]; then
+  echo "missing promtool (brew install prometheus)"; exit 1
+else
+  echo "== promtool not installed: alert rules not unit-tested (brew install prometheus)"
+fi
+
 if command -v kube-score >/dev/null; then
   echo "== kube-score (advisory)"
   # Ignored: container-security-context-user-group-id (it wants runAsUser >= 10000; OpenShift
@@ -81,7 +101,9 @@ if command -v kube-score >/dev/null; then
   # (IfNotPresent with a digest is fine), ephemeral-storage (not a concern here).
   ks_args=(score --output-format ci --kubernetes-version "v$(cut -d. -f1-2 <<<"$K8S_VERSION")"
     --ignore-test container-security-context-user-group-id,container-image-pull-policy,container-ephemeral-storage-request-and-limit)
-  if [ "${KUBE_SCORE_STRICT:-0}" = "1" ]; then kube-score "${ks_args[@]}" "$render"/*.yaml
-  else kube-score "${ks_args[@]}" "$render"/*.yaml | grep -Ev '^\[(OK|SKIPPED)\]' | sort -u || true; fi
+  for f in "$render"/*.yaml; do
+    if [ "${KUBE_SCORE_STRICT:-0}" = "1" ]; then kube-score "${ks_args[@]}" "$f"
+    else kube-score "${ks_args[@]}" "$f" | grep -Ev '^\[(OK|SKIPPED)\]' | sed "s|^|$(basename "$f" .yaml): |" || true; fi
+  done
 fi
 echo "deploy-check OK"

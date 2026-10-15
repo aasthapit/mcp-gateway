@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fetch the JSON schemas kubeconform needs for the CRDs we render (Route, ExternalSecret,
-# ServiceMonitor, PerconaServerMongoDB, Argo CD Application/ApplicationSet, Tekton) into
+# ServiceMonitor, PrometheusRule, PerconaServerMongoDB, Argo CD Application/ApplicationSet, Tekton) into
 # deploy/kubeconform/cache/<group>/<kind>_<version>.json (gitignored: 1-2 MB each).
 #
 # Sources:
@@ -32,6 +32,7 @@ fetch() { # url dest
 catalog="https://raw.githubusercontent.com/datreeio/CRDs-catalog/${CATALOG_REF}"
 for f in external-secrets.io/externalsecret_v1.json \
          monitoring.coreos.com/servicemonitor_v1.json \
+         monitoring.coreos.com/prometheusrule_v1.json \
          psmdb.percona.com/perconaservermongodb_v1.json \
          argoproj.io/application_v1alpha1.json \
          argoproj.io/applicationset_v1alpha1.json; do

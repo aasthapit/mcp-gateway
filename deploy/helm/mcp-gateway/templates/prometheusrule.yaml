@@ -1,0 +1,97 @@
+{{- if .Values.prometheusRule.enabled }}
+{{- $r := .Values.prometheusRule }}
+{{- $sel := printf "job=\"%s\", namespace=\"%s\"" (include "mcp-gateway.fullname" .) .Release.Namespace }}
+{{- $runbook := trimSuffix "/" $r.runbookUrl }}
+# Alerts for the gateway (WP7). Every alert links to its section in docs/runbook.md.
+# All metrics are per pod; the expressions aggregate so one bad pod and a fleet-wide
+# problem are told apart where it matters. Thresholds: values.yaml prometheusRule.*.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+    {{- with $r.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: mcp-gateway.rules
+      rules:
+        - alert: McpGatewayPolicyStale
+          # Seconds since Mongo last confirmed the pod's snapshot (load or matching version
+          # poll). gateway_policy_age_seconds is the time since the last *change* and grows
+          # legitimately while nobody edits the policy, so it is not alerted on.
+          expr: max by (pod) (gateway_policy_staleness_seconds{ {{- $sel -}} }) > {{ $r.policyStalenessSeconds }}
+          for: 1m
+          labels:
+            severity: critical
+            {{- with $r.extraAlertLabels }}{{ toYaml . | nindent 12 }}{{- end }}
+          annotations:
+            summary: "Gateway pod {{ "{{ $labels.pod }}" }} serves a policy not confirmed for more than {{ $r.policyStalenessSeconds }} s"
+            description: "Allow-list changes (including revocations) are not reaching this pod; it keeps serving the last snapshot. Usually Mongo is unreachable from the pod."
+            runbook_url: "{{ $runbook }}#mcpgatewaypolicystale"
+        - alert: McpGatewayChangeStreamDown
+          expr: max by (pod) (gateway_change_stream_up{ {{- $sel -}} }) == 0
+          for: {{ $r.changeStreamDownFor }}
+          labels:
+            severity: warning
+            {{- with $r.extraAlertLabels }}{{ toYaml . | nindent 12 }}{{- end }}
+          annotations:
+            summary: "Policy change stream down on {{ "{{ $labels.pod }}" }}"
+            description: "Policy edits now reach this pod only through the {{ .Values.config.POLICY_POLL_SEC }} s version poll."
+            runbook_url: "{{ $runbook }}#mcpgatewaychangestreamdown"
+        - alert: McpGatewayUpstreamDown
+          # max over pods: every pod's probe fails, so the upstream (not one pod's network)
+          # is down. Its tools fail fast; other upstreams are unaffected.
+          expr: max by (upstream) (gateway_upstream_up{ {{- $sel -}} }) == 0
+          for: {{ $r.upstreamDownFor }}
+          labels:
+            severity: warning
+            {{- with $r.extraAlertLabels }}{{ toYaml . | nindent 12 }}{{- end }}
+          annotations:
+            summary: "Upstream {{ "{{ $labels.upstream }}" }} is down for every gateway pod"
+            description: "tools/call to {{ "{{ $labels.upstream }}" }}_* fails; check gateway_upstream_errors_total and /internal/upstreams/health."
+            runbook_url: "{{ $runbook }}#mcpgatewayupstreamdown"
+        - alert: McpGatewayHigh5xxRatio
+          expr: |
+            sum(rate(gateway_http_responses_total{ {{- $sel -}}, route="mcp", code="5xx"}[5m]))
+              /
+            clamp_min(sum(rate(gateway_http_responses_total{ {{- $sel -}}, route="mcp"}[5m])), 1e-9)
+              > {{ $r.http5xxRatio }}
+          for: {{ $r.http5xxFor }}
+          labels:
+            severity: critical
+            {{- with $r.extraAlertLabels }}{{ toYaml . | nindent 12 }}{{- end }}
+          annotations:
+            summary: "More than {{ mulf $r.http5xxRatio 100 }} % of /mcp responses are HTTP 5xx"
+            description: "Upstream and tool failures are MCP errors inside HTTP 200; 5xx means the gateway itself fails (crash, overload, bad deploy)."
+            runbook_url: "{{ $runbook }}#mcpgatewayhigh5xxratio"
+        - alert: McpGatewayDenialSpike
+          # Absolute floor plus a jump against the previous hour: a client probing tools
+          # it may not use, or a policy change that removed tools people rely on.
+          expr: |
+            (sum(rate(gateway_policy_denials_total{ {{- $sel -}} }[5m])) > {{ $r.denialsPerSec }})
+              and
+            (sum(rate(gateway_policy_denials_total{ {{- $sel -}} }[5m]))
+              > {{ $r.denialSpikeFactor }} * sum(rate(gateway_policy_denials_total{ {{- $sel -}} }[1h] offset 5m)))
+          for: 5m
+          labels:
+            severity: warning
+            {{- with $r.extraAlertLabels }}{{ toYaml . | nindent 12 }}{{- end }}
+          annotations:
+            summary: "Policy denials jumped to {{ "{{ $value | humanize }}" }}/s"
+            description: "Check the tools.call.denied audit events for the principals and tools involved, and policy_history for a recent change."
+            runbook_url: "{{ $runbook }}#mcpgatewaydenialspike"
+        - alert: McpGatewayRateLimitSpike
+          expr: sum by (principal_kind) (rate(gateway_rate_limited_total{ {{- $sel -}} }[5m])) > {{ $r.rateLimitedPerSec }}
+          for: {{ $r.rateLimitedFor }}
+          labels:
+            severity: warning
+            {{- with $r.extraAlertLabels }}{{ toYaml . | nindent 12 }}{{- end }}
+          annotations:
+            summary: "{{ "{{ $labels.principal_kind }}" }} callers are rate limited at {{ "{{ $value | humanize }}" }}/s"
+            description: "Per-pod token buckets are rejecting requests: a misbehaving client, a NAT hiding many guests behind one IP, or limits set too low for real traffic."
+            runbook_url: "{{ $runbook }}#mcpgatewayratelimitspike"
+{{- end }}

@@ -23,7 +23,9 @@ imagePullSecrets: []
 replicaCount: 3
 revisionHistoryLimit: 3
 
-# SIGTERM closes SSE listeners gracefully; uvicorn's graceful timeout is 30 s, keep a margin.
+# Shutdown budget (gateway/src/mcp_gateway/main.py): preStop sleep, then SIGTERM drains
+# (readyz 503, listen streams closed gracefully) and in-flight calls get
+# config.SHUTDOWN_GRACE_SEC; keep preStop + grace + ~5 s < terminationGracePeriodSeconds.
 terminationGracePeriodSeconds: 60
 # Sleep before SIGTERM so the Route/Endpoints stop sending new requests first.
 preStopSleepSeconds: 5
@@ -121,8 +123,22 @@ config:
   TOOLS_LIST_TTL_SEC: "30"
   LOG_LEVEL: INFO
   LOG_JSON: "true"
-  # off | propagation_only | native (OTLP export; see telemetry.*)
+  # off | propagation_only | native (OTLP export to telemetry.otlpEndpoint)
   TELEMETRY_MODE: "off"
+  # WP7 limits, all per pod (N replicas admit N x these; global limits are v2).
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_ANONYMOUS_RPS: "20"
+  RATE_LIMIT_ANONYMOUS_BURST: "60"
+  RATE_LIMIT_USER_RPS: "50"
+  RATE_LIMIT_USER_BURST: "150"
+  # Anonymous callers are keyed by client IP. Only X-Forwarded-For written by these
+  # proxies is believed: the OpenShift router pods (default clusterNetwork 10.128.0.0/14;
+  # add the node CIDR for a HostNetwork ingress controller). JSON list or CSV.
+  TRUSTED_PROXIES: "10.128.0.0/14"
+  RESPONSE_MAX_BYTES: "1000000"
+  MAX_REQUEST_BODY_BYTES: "1048576"
+  JWKS_FETCH_TIMEOUT_SEC: "3"
+  SHUTDOWN_GRACE_SEC: "45"
 
 # Extra environment variables, verbatim (name/value or valueFrom).
 extraEnv: []
@@ -130,8 +146,10 @@ extraEnv: []
 extraEnvFrom: []
 
 telemetry:
-  # When config.TELEMETRY_MODE != off, point the OTLP exporter at the collector.
+  # When config.TELEMETRY_MODE != off, point the OTLP exporter at the collector
+  # (base URL; :4318 for http/protobuf, :4317 for grpc).
   otlpEndpoint: http://otel-collector.observability.svc:4318
+  otlpProtocol: http/protobuf
   serviceName: mcp-gateway
 
 # ---------------------------------------------------------------------------------------
@@ -233,6 +251,13 @@ podDisruptionBudget:
   enabled: true
   minAvailable: 2
 
+# Preferred (soft) anti-affinity: replicas avoid sharing a node when the scheduler can.
+# Ignored when `affinity` is set explicitly (that wins verbatim).
+podAntiAffinity:
+  enabled: true
+  weight: 100
+  topologyKey: kubernetes.io/hostname
+
 topologySpreadConstraints:
   - maxSkew: 1
     topologyKey: topology.kubernetes.io/zone
@@ -320,6 +345,25 @@ networkPolicy:
 # ---------------------------------------------------------------------------------------
 # Prometheus Operator ServiceMonitor (user-workload monitoring must be enabled).
 # ---------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------
+# Prometheus Operator PrometheusRule: the alerts in docs/runbook.md (WP7).
+# ---------------------------------------------------------------------------------------
+prometheusRule:
+  enabled: false
+  labels: {}
+  # Extra labels on every alert (routing: team, service, ...).
+  extraAlertLabels: {}
+  runbookUrl: https://github.com/aasthapit/mcp-gateway/blob/main/docs/runbook.md
+  policyStalenessSeconds: 300
+  changeStreamDownFor: 2m
+  upstreamDownFor: 5m
+  http5xxRatio: 0.02
+  http5xxFor: 5m
+  denialsPerSec: 1
+  denialSpikeFactor: 5
+  rateLimitedPerSec: 5
+  rateLimitedFor: 10m
+
 serviceMonitor:
   enabled: false
   interval: 30s

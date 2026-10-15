@@ -71,3 +71,6 @@ networkPolicy:
 serviceMonitor:
   enabled: true
   interval: 30s
+
+prometheusRule:
+  enabled: true
