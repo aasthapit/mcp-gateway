@@ -53,9 +53,9 @@ Defaults when a document omits `timeoutsMs`: connect 2 s, call 60 s.
   every request is a self-contained POST, so one shared client is just a shared connection
   pool. A handshake-era session is stateful (and `SSETransport.legacy_only = True`), so
   `shared` is forced to `per_request` there and the reason is logged and reported in
-  `/internal/upstreams/health`. The Mongo schema has no `protocolMode` yet (default `auto`),
-  so Mongo-sourced upstreams run `per_request` until the schema gains that field
-  (follow-up for WP0/WP5).
+  `/internal/upstreams/health`. The Mongo schema has an optional `protocolMode` (default
+  `auto`), so a Mongo-sourced upstream must set `protocolMode: 2026-07-28` explicitly to
+  share a session; the local seed does so for both sample upstreams.
 - Measured on the local stack (`sample-private`, pinned modern): per_request ~20 ms per
   call, shared ~5 ms per call after the first; shared survives `podman stop/start` of the
   upstream (one failed call, then `SharedClient` reconnects).

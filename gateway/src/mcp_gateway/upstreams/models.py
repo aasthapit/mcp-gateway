@@ -77,8 +77,8 @@ class UpstreamConfig(BaseModel):
     updated_at: datetime | None = Field(default=None, alias="updatedAt")
     updated_by: str | None = Field(default=None, alias="updatedBy")
     protocol_mode: ProtocolMode = Field(default="auto", alias="protocolMode")
-    """Protocol era the proxy speaks upstream (ADR 0001). Not in the Mongo schema yet, so
-    Mongo-sourced upstreams default to ``auto``; ``sessionMode: shared`` needs ``2026-07-28``."""
+    """Protocol era the proxy speaks upstream (ADR 0001). Optional in the Mongo schema
+    (default ``auto``); ``sessionMode: shared`` needs ``2026-07-28``."""
 
     @model_validator(mode="after")
     def _transport_fields(self) -> UpstreamConfig:

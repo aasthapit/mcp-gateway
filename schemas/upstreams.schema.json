@@ -60,6 +60,12 @@
       "enum": ["shared", "per_request"],
       "description": "shared = one connected client per gateway process (stateless upstreams); per_request = fresh upstream session per call."
     },
+    "protocolMode": {
+      "type": "string",
+      "enum": ["auto", "2026-07-28", "legacy"],
+      "default": "auto",
+      "description": "MCP protocol era the gateway speaks to this upstream (ADR 0001). auto = negotiate; 2026-07-28 = pin the modern stateless era (required for sessionMode: shared); legacy = handshake era. Omitted means auto."
+    },
     "timeoutsMs": {
       "type": "object",
       "additionalProperties": false,
