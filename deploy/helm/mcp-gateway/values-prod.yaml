@@ -1,0 +1,73 @@
+# Production overlay: digest-pinned image, ESO-managed secrets, strict host list, HPA 3..10,
+# PDB minAvailable 2, ServiceMonitor, OTel export, default-deny NetworkPolicy with named egress.
+#   Rendered by Argo CD (deploy/openshift/argocd); never `helm install` by hand in prod.
+image:
+  # Set by the pipeline (deploy/openshift/tekton): immutable digest, tag kept for humans.
+  tag: "0.1.0"
+  digest: ""
+
+replicaCount: 3
+
+config:
+  ENV: prod
+  ALLOW_ANONYMOUS: "true"
+  OIDC_ISSUER: https://idp.example.com/realms/mcp
+  JWT_AUDIENCE: mcp-gateway
+  LOG_LEVEL: INFO
+  LOG_JSON: "true"
+  TELEMETRY_MODE: native
+
+telemetry:
+  otlpEndpoint: http://otel-collector.observability.svc:4318
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
+externalSecrets:
+  enabled: true
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+secrets:
+  create: false
+
+route:
+  host: mcp.example.com
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 60
+  listenStreams:
+    enabled: false
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+
+networkPolicy:
+  enabled: true
+  egress:
+    otel:
+      enabled: true
+
+serviceMonitor:
+  enabled: true
+  interval: 30s

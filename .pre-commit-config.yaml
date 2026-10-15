@@ -1,6 +1,7 @@
 # Run `pre-commit install` once; CI runs `pre-commit run --all-files`.
 # docs/ is excluded: the plan and research notes are prose, and ruff/prettier rewrap their code fences.
-exclude: ^docs/
+# Helm templates are Go-templated YAML, not YAML: check-yaml and prettier cannot parse them.
+exclude: ^(docs/|deploy/helm/[^/]+/templates/)
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

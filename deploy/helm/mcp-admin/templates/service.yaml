@@ -1,0 +1,23 @@
+{{- range $component := list "api" "ui" }}
+{{- $c := index $.Values $component }}
+{{- if $c.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-admin.fullname" $ }}-{{ $component }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "mcp-admin.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ $c.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "mcp-admin.selectorLabels" (dict "ctx" $ "component" $component) | nindent 4 }}
+---
+{{- end }}
+{{- end }}

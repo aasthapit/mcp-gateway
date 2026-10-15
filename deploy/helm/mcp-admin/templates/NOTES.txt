@@ -1,0 +1,7 @@
+{{ .Chart.Name }} {{ .Chart.Version }} released as {{ .Release.Name }} in {{ .Release.Namespace }}.
+{{- if .Values.route.enabled }}
+UI:  https://{{ default "<router-generated>" .Values.route.host }}/
+API: https://{{ default "<router-generated>" .Values.route.host }}{{ .Values.route.apiPath }}
+{{- end }}
+Images: api {{ include "mcp-admin.image" (dict "ctx" . "image" .Values.api.image) }}, ui {{ include "mcp-admin.image" (dict "ctx" . "image" .Values.ui.image) }}
+WP5: set api.image/ui.image and api.env (deploy/helm/mcp-admin/values.yaml); secrets flow is in deploy/README.md.

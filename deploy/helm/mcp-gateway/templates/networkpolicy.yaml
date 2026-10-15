@@ -1,0 +1,163 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- /*
+Default deny for the gateway pods (both directions), then the allow-list below. OpenShift's
+OVN-Kubernetes evaluates all policies selecting a pod as a union, so the two objects compose.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}-default-deny
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "mcp-gateway.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "mcp-gateway.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # MCP traffic from the OpenShift router.
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.ingress.router.namespaceSelector | nindent 12 }}
+        {{- with $np.ingress.extraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.containerPort }}
+          protocol: TCP
+    {{- if $np.ingress.adminApi.enabled }}
+    # /internal/* from the admin API (same namespace unless namespaceSelector is set).
+    - from:
+        - podSelector:
+            {{- toYaml $np.ingress.adminApi.podSelector | nindent 12 }}
+          {{- with $np.ingress.adminApi.namespaceSelector }}
+          namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      ports:
+        - port: {{ .Values.containerPort }}
+          protocol: TCP
+    {{- end }}
+    {{- if $np.ingress.monitoring.enabled }}
+    # Prometheus scrapes the metrics port only.
+    - from:
+        {{- range $np.ingress.monitoring.namespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.metricsContainerPort }}
+          protocol: TCP
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "mcp-gateway.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    {{- if $np.egress.dns.enabled }}
+    # Cluster DNS (needed before anything else resolves).
+    - to:
+        - namespaceSelector:
+            {{- toYaml $np.egress.dns.namespaceSelector | nindent 12 }}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+    {{- end }}
+    {{- if $np.egress.mongo.enabled }}
+    # MongoDB replica set (policy store + change stream).
+    - to:
+        {{- if $np.egress.mongo.ipBlocks }}
+        {{- range $np.egress.mongo.ipBlocks }}
+        - ipBlock:
+            {{- toYaml . | nindent 12 }}
+        {{- end }}
+        {{- else }}
+        - podSelector:
+            {{- toYaml $np.egress.mongo.podSelector | nindent 12 }}
+          {{- with $np.egress.mongo.namespaceSelector }}
+          namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      ports:
+        - port: {{ $np.egress.mongo.port }}
+          protocol: TCP
+    {{- end }}
+    {{- if $np.egress.upstreams.enabled }}
+    # In-cluster upstream MCP servers.
+    - to:
+        - namespaceSelector:
+            {{- toYaml $np.egress.upstreams.namespaceSelector | nindent 12 }}
+      {{- with $np.egress.upstreams.ports }}
+      ports:
+        {{- range . }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- if $np.egress.https.enabled }}
+    # IdP (OIDC discovery + JWKS) and external https upstreams.
+    - to:
+        {{- range $np.egress.https.ipBlocks }}
+        - ipBlock:
+            {{- toYaml . | nindent 12 }}
+        {{- end }}
+      ports:
+        - port: {{ $np.egress.https.port }}
+          protocol: TCP
+    {{- end }}
+    {{- if $np.egress.otel.enabled }}
+    # OTLP exporter -> collector.
+    - to:
+        - namespaceSelector:
+            {{- toYaml $np.egress.otel.namespaceSelector | nindent 12 }}
+          {{- with $np.egress.otel.podSelector }}
+          podSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      ports:
+        {{- range $np.egress.otel.ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    {{- end }}
+    {{- with $np.egress.extraTo }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

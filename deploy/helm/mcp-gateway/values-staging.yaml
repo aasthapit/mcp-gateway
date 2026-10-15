@@ -1,0 +1,9 @@
+# Staging: prod shape (ESO, HPA, PDB, ServiceMonitor) with a staging IdP and host.
+# Layer it on top of values-prod.yaml:  -f values-prod.yaml -f values-staging.yaml
+config:
+  OIDC_ISSUER: https://idp-staging.example.com/realms/mcp
+  LOG_LEVEL: DEBUG
+route:
+  host: mcp-staging.example.com
+autoscaling:
+  maxReplicas: 5

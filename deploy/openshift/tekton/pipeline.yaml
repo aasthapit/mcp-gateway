@@ -1,0 +1,124 @@
+# OpenShift Pipelines (Tekton) build for the gateway image.
+#   fetch -> test (pytest + ruff) -> build+push (buildah, candidate tag) -> scan (Trivy)
+#   -> promote by digest (skopeo) -> bump deploy/helm/mcp-gateway/values-prod.yaml -> git push
+# Argo CD then rolls the new digest out. Cluster tasks come from the `cluster` resolver
+# (openshift-pipelines namespace); project tasks are in tasks/.
+#   oc apply -n mcp-gateway -f deploy/openshift/tekton/tasks/ -f deploy/openshift/tekton/pipeline.yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: mcp-gateway-build
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/part-of: mcp-gateway
+spec:
+  description: Build, test, scan and publish the gateway image by digest; bump the Helm values.
+  params:
+    - name: git-url
+      type: string
+      default: https://github.com/aasthapit/mcp-gateway.git
+    - name: git-revision
+      type: string
+      default: main
+    - name: image
+      type: string
+      description: Release image name without tag (chart image.repository)
+      default: ghcr.io/aasthapit/mcp-gateway
+    - name: candidate-image
+      type: string
+      description: Where buildah pushes before the scan passes (internal registry)
+      default: image-registry.openshift-image-registry.svc:5000/mcp-gateway/mcp-gateway-candidate
+    - name: version
+      type: string
+      description: Human tag for the promoted image (chart appVersion / git tag)
+      default: 0.1.0
+    - name: values-file
+      type: string
+      default: deploy/helm/mcp-gateway/values-prod.yaml
+    - name: push-branch
+      type: string
+      description: Branch that receives the values bump (Argo CD watches it)
+      default: release
+    - name: trivy-severity
+      type: string
+      default: HIGH,CRITICAL
+  workspaces:
+    - name: source
+    - name: dockerconfig
+      description: Secret with .dockerconfigjson for the candidate and release registries
+    - name: git-credentials
+      description: Secret with .git-credentials + .gitconfig for the values bump push
+      optional: true
+  results:
+    - name: image-digest
+      value: $(tasks.promote.results.digest)
+  tasks:
+    - name: fetch
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: git-clone }
+          - { name: namespace, value: openshift-pipelines }
+      workspaces:
+        - { name: output, workspace: source }
+      params:
+        - { name: URL, value: $(params.git-url) }
+        - { name: REVISION, value: $(params.git-revision) }
+        - { name: DELETE_EXISTING, value: "true" }
+
+    - name: test
+      runAfter: [fetch]
+      taskRef: { name: gateway-test }
+      workspaces:
+        - { name: source, workspace: source }
+
+    - name: build
+      runAfter: [test]
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: buildah }
+          - { name: namespace, value: openshift-pipelines }
+      workspaces:
+        - { name: source, workspace: source }
+        - { name: dockerconfig, workspace: dockerconfig }
+      params:
+        - { name: IMAGE, value: "$(params.candidate-image):$(tasks.fetch.results.commit)" }
+        - { name: DOCKERFILE, value: ./gateway/Containerfile }
+        - { name: CONTEXT, value: ./gateway }
+        - { name: TLSVERIFY, value: "true" }
+        - { name: FORMAT, value: oci }
+        - { name: BUILD_EXTRA_ARGS, value: "--label org.opencontainers.image.revision=$(tasks.fetch.results.commit) --label org.opencontainers.image.version=$(params.version)" }
+
+    - name: scan
+      runAfter: [build]
+      taskRef: { name: trivy-image-scan }
+      workspaces:
+        - { name: dockerconfig, workspace: dockerconfig }
+      params:
+        - { name: image, value: "$(params.candidate-image)@$(tasks.build.results.IMAGE_DIGEST)" }
+        - { name: severity, value: $(params.trivy-severity) }
+
+    - name: promote
+      runAfter: [scan]
+      taskRef: { name: skopeo-promote }
+      workspaces:
+        - { name: dockerconfig, workspace: dockerconfig }
+      params:
+        - { name: source, value: "$(params.candidate-image)@$(tasks.build.results.IMAGE_DIGEST)" }
+        - { name: destination, value: "$(params.image):$(params.version)" }
+
+    - name: bump-values
+      runAfter: [promote]
+      taskRef: { name: helm-values-bump }
+      workspaces:
+        - { name: source, workspace: source }
+        - { name: git-credentials, workspace: git-credentials }
+      params:
+        - { name: values-file, value: $(params.values-file) }
+        - { name: tag, value: $(params.version) }
+        - { name: digest, value: $(tasks.promote.results.digest) }
+        - { name: branch, value: $(params.push-branch) }
+        - { name: commit-message, value: "deploy: mcp-gateway $(params.version) @ $(tasks.promote.results.digest) (build $(tasks.fetch.results.commit))" }

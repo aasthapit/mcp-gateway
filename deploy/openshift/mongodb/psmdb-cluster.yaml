@@ -1,0 +1,141 @@
+# Percona Server for MongoDB cluster for the gateway policy store (PLAN 3.6, ADR 0010).
+# Requires the Percona Operator for MongoDB (OperatorHub, v1.23.x) in this namespace or
+# cluster-wide. See mongodb/README.md for install, the app users secret and restores.
+#
+#   oc apply -n mcp-gateway -f deploy/openshift/mongodb/psmdb-cluster.yaml
+apiVersion: psmdb.percona.com/v1
+kind: PerconaServerMongoDB
+metadata:
+  name: mcp-mongo
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/part-of: mcp-gateway
+  finalizers:
+    # Clean up PVCs on deletion; drop this finalizer to keep data after `oc delete psmdb`.
+    - percona.com/delete-psmdb-pods-in-order
+spec:
+  crVersion: 1.23.1
+  image: percona/percona-server-mongodb:8.0.32-14
+  imagePullPolicy: IfNotPresent
+  platform: openshift
+  # Operator-managed TLS (self-signed, or cert-manager when installed). The CA is published in
+  # Secret mcp-mongo-ssl (ca.crt), which the gateway/admin charts mount (mongoCA.*).
+  tls:
+    mode: requireTLS
+    certValidityDuration: 2160h
+    allowInvalidCertificates: false
+  updateStrategy: SmartUpdate
+  upgradeOptions:
+    apply: disabled
+    schedule: "0 2 * * *"
+    setFCV: false
+  secrets:
+    # System users (databaseAdmin, clusterAdmin, backup, ...). The operator generates this
+    # Secret with random passwords when it does not exist.
+    users: mcp-mongo-system-users
+    encryptionKey: mcp-mongo-encryption-key
+  # Application users (operator >= 1.16). Passwords come from mcp-mongo-app-users
+  # (ExternalSecret in prod: app-users-externalsecret.yaml; plain example for dev).
+  users:
+    # Gateway: reads policy and opens change streams. The built-in `read` role includes the
+    # changeStream action, so no write access is needed.
+    - name: gateway
+      db: admin
+      passwordSecretRef:
+        name: mcp-mongo-app-users
+        key: gateway-password
+      roles:
+        - name: read
+          db: mcp_gateway
+    # Admin API: CRUD on upstreams/toolsets/grants, meta.version bumps, policy_history.
+    - name: admin-api
+      db: admin
+      passwordSecretRef:
+        name: mcp-mongo-app-users
+        key: admin-api-password
+      roles:
+        - name: readWrite
+          db: mcp_gateway
+  replsets:
+    - name: rs0
+      size: 3
+      affinity:
+        antiAffinityTopologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: percona-server-mongodb
+      podDisruptionBudget:
+        maxUnavailable: 1
+      expose:
+        enabled: false
+      # Keep enough oplog for a gateway replica to resume its change stream after a restart
+      # (docs/research/infra-notes.md section 2).
+      configuration: |
+        replication:
+          oplogSizeMB: 2048
+        storage:
+          oplogMinRetentionHours: 24
+        setParameter:
+          enableFlowControl: true
+      resources:
+        requests:
+          cpu: 500m
+          memory: 2Gi
+        limits:
+          cpu: "2"
+          memory: 2Gi
+      volumeSpec:
+        persistentVolumeClaim:
+          # storageClassName: gp3-csi   # set the cluster's SSD class
+          resources:
+            requests:
+              storage: 20Gi
+  sharding:
+    enabled: false
+  backup:
+    enabled: true
+    image: percona/percona-backup-mongodb:2.15.0
+    storages:
+      object-storage:
+        main: true
+        type: s3
+        s3:
+          # Placeholders: bucket, region and endpoint for the site's S3-compatible store
+          # (ODF/NooBaa, AWS S3, MinIO). Credentials: Secret mcp-mongo-backup-s3 with
+          # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (ExternalSecret below).
+          bucket: CHANGE-ME-mcp-mongo-backups
+          region: us-east-1
+          endpointUrl: https://s3.CHANGE-ME.example.com
+          prefix: mcp-mongo
+          credentialsSecret: mcp-mongo-backup-s3
+          insecureSkipTLSVerify: false
+    pitr:
+      enabled: true
+      oplogOnly: false
+      oplogSpanMin: 10
+      compressionType: gzip
+      compressionLevel: 6
+    tasks:
+      - name: daily-logical
+        enabled: true
+        schedule: "0 2 * * *"
+        retention:
+          count: 14
+          type: count
+          deleteFromStorage: true
+        storageName: object-storage
+        type: logical
+        compressionType: gzip
+      - name: weekly-physical
+        enabled: true
+        schedule: "0 3 * * 0"
+        retention:
+          count: 8
+          type: count
+          deleteFromStorage: true
+        storageName: object-storage
+        type: physical

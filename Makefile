@@ -17,7 +17,8 @@ KC      := http://localhost:$(KC_PORT)/realms/mcp
 KC_USER ?= dev1
 KC_PASS ?= $(KC_USER)
 
-.PHONY: help env up down logs ps restart seed validators validate-seed token token-ci decode mongosh smoke lint fmt pre-commit clean
+.PHONY: help env up down logs ps restart seed validators validate-seed token token-ci decode mongosh smoke lint fmt pre-commit clean \
+	deploy-check deploy-lint deploy-template deploy-kubeconform deploy-policy deploy-schemas deploy-image
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -86,3 +87,37 @@ fmt: ## auto-format (ruff format, prettier)
 
 pre-commit: ## install the git hook
 	pre-commit install
+
+# ---------------------------------------------------------------------------------------
+# deploy/ (WP6): Helm charts + OpenShift manifests. See deploy/README.md.
+# ---------------------------------------------------------------------------------------
+GATEWAY_IMAGE ?= $(shell sed -n 's/^  repository: *//p' deploy/helm/mcp-gateway/values.yaml | head -1)
+GATEWAY_TAG   ?= $(shell sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}/\1/p' deploy/helm/mcp-gateway/Chart.yaml)
+
+deploy-check: ## lint + template + kubeconform + conftest for deploy/ (needs helm, kubeconform, conftest)
+	deploy/deploy-check.sh
+
+deploy-lint: ## helm lint both charts with every values overlay
+	@for c in mcp-gateway mcp-admin; do for v in "" values-dev.yaml values-prod.yaml; do \
+	  f=""; [ -n "$$v" ] && [ -f deploy/helm/$$c/$$v ] && f="-f deploy/helm/$$c/$$v"; helm lint --strict deploy/helm/$$c $$f || exit 1; done; done
+
+deploy-template: ## render both charts (ENV=dev|prod|staging, default prod) to stdout
+	@env="$${ENV:-prod}"; for c in mcp-gateway mcp-admin; do \
+	  f="-f deploy/helm/$$c/values-prod.yaml"; [ "$$env" = dev ] && f="-f deploy/helm/$$c/values-dev.yaml"; \
+	  [ "$$env" = staging ] && f="-f deploy/helm/$$c/values-prod.yaml -f deploy/helm/$$c/values-staging.yaml"; \
+	  helm template $$c deploy/helm/$$c -n mcp-gateway $$f; done
+
+deploy-schemas: ## (re)fetch CRD JSON schemas for kubeconform into deploy/kubeconform/cache
+	deploy/kubeconform/fetch-schemas.sh
+
+deploy-kubeconform: deploy-schemas ## kubeconform on the current renders (run deploy-check first)
+	kubeconform -strict -summary -schema-location default \
+	  -schema-location 'deploy/kubeconform/cache/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' deploy/.render/*.yaml
+
+deploy-policy: ## conftest restricted-SCC policy on the current renders + unit tests
+	conftest verify --policy deploy/policy
+	conftest test --policy deploy/policy --data deploy/policy/data-prod.yaml deploy/.render/*-prod.yaml
+
+deploy-image: ## build the gateway image with podman under the chart's image name:tag
+	podman build -t $(GATEWAY_IMAGE):$(GATEWAY_TAG) -f gateway/Containerfile gateway
+	@echo "built $(GATEWAY_IMAGE):$(GATEWAY_TAG)  (chart: deploy/helm/mcp-gateway image.repository + appVersion)"

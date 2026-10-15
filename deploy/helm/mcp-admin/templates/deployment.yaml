@@ -1,0 +1,124 @@
+{{- range $component := list "api" "ui" }}
+{{- $c := index $.Values $component }}
+{{- if $c.enabled }}
+{{- $sel := dict "ctx" $ "component" $component }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-admin.fullname" $ }}-{{ $component }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "mcp-admin.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  replicas: {{ $c.replicaCount }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "mcp-admin.selectorLabels" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-admin.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $component }}
+        {{- with $.Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ toYaml $c.env | sha256sum }}
+        {{- with $.Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "mcp-admin.serviceAccountName" $ }}
+      automountServiceAccountToken: {{ $.Values.serviceAccount.automountServiceAccountToken }}
+      terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ $component }}
+          image: {{ include "mcp-admin.image" (dict "ctx" $ "image" $c.image) | quote }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ $c.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "mcp-admin.fullname" $ }}-{{ $component }}
+            {{- if eq $component "api" }}
+            - secretRef:
+                name: {{ include "mcp-admin.envSecretName" $ }}
+            {{- end }}
+          {{- with $c.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          startupProbe:
+            httpGet: { path: {{ $c.probes.livenessPath }}, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: {{ $c.probes.readinessPath }}, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: {{ $c.probes.livenessPath }}, port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if and (eq $component "api") $.Values.mongoCA.enabled }}
+            - name: mongo-ca
+              mountPath: {{ $.Values.mongoCA.mountPath }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ $c.tmpVolume.sizeLimit }}
+        {{- if and (eq $component "api") $.Values.mongoCA.enabled }}
+        - name: mongo-ca
+          secret:
+            secretName: {{ $.Values.mongoCA.secretName }}
+            optional: true
+            items:
+              - key: {{ $.Values.mongoCA.key }}
+                path: {{ $.Values.mongoCA.key }}
+        {{- end }}
+      {{- with $.Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- range . }}
+        - labelSelector:
+            matchLabels:
+              {{- include "mcp-admin.selectorLabels" $sel | nindent 14 }}
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- end }}
+      {{- with $.Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+{{- end }}
+{{- end }}

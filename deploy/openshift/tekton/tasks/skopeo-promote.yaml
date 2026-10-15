@@ -1,0 +1,36 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: skopeo-promote
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/part-of: mcp-gateway
+spec:
+  description: Copy a scanned candidate image (by digest) to the release registry and return its digest.
+  params:
+    - name: source
+      type: string
+    - name: destination
+      type: string
+    - name: skopeo-image
+      type: string
+      default: registry.redhat.io/rhel9/skopeo:latest
+  workspaces:
+    - name: dockerconfig
+  results:
+    - name: digest
+  steps:
+    - name: copy
+      image: $(params.skopeo-image)
+      env:
+        - { name: REGISTRY_AUTH_FILE, value: $(workspaces.dockerconfig.path)/.dockerconfigjson }
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities: { drop: [ALL] }
+      script: |
+        #!/bin/sh
+        set -eu
+        skopeo copy --preserve-digests "docker://$(params.source)" "docker://$(params.destination)"
+        skopeo inspect --format '{{.Digest}}' "docker://$(params.destination)" | tr -d '\n' > "$(results.digest.path)"
+        echo "promoted $(params.destination) @ $(cat "$(results.digest.path)")"

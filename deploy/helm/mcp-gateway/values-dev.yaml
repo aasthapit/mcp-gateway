@@ -1,0 +1,56 @@
+# Dev / single-cluster sandbox overlay (CRC, a shared dev cluster): plain Secrets rendered
+# from values, no ESO, router-generated host, one replica, PDB off, Mongo from the Percona CR.
+#   helm upgrade --install mcp-gateway deploy/helm/mcp-gateway -n mcp-gateway \
+#     -f deploy/helm/mcp-gateway/values-dev.yaml --set route.host=mcp-dev.apps.example.com
+image:
+  tag: dev
+  pullPolicy: Always
+
+replicaCount: 1
+
+config:
+  ENV: dev
+  ALLOW_ANONYMOUS: "true"
+  OIDC_ISSUER: https://keycloak-dev.apps.example.com/realms/mcp
+  LOG_LEVEL: DEBUG
+  LOG_JSON: "false"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+externalSecrets:
+  enabled: false
+secrets:
+  create: true
+  values:
+    # The Percona CR creates mcp-mongo-rs0.<ns>.svc; the password is the one in
+    # deploy/openshift/mongodb/app-users-secret.example.yaml.
+    mongoUri: mongodb://gateway:CHANGE-ME@mcp-mongo-rs0.mcp-gateway.svc.cluster.local:27017/mcp_gateway?replicaSet=rs0&tls=true&tlsCAFile=/etc/gateway/mongo-ca/ca.crt
+    internalToken: dev-internal-token-change-me
+    upstreams:
+      sample-private.token: dev-token
+
+route:
+  host: ""
+  tls:
+    termination: edge
+
+autoscaling:
+  enabled: false
+podDisruptionBudget:
+  enabled: false
+
+networkPolicy:
+  egress:
+    https:
+      # Dev clusters often run the IdP in-cluster on a private range; allow everything on 443.
+      ipBlocks:
+        - cidr: 0.0.0.0/0
+
+serviceMonitor:
+  enabled: false

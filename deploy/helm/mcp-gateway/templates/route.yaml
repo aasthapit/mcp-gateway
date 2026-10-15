@@ -1,0 +1,43 @@
+{{- if .Values.route.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+    {{- with .Values.route.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- toYaml .Values.route.annotations | nindent 4 }}
+spec:
+  {{- with .Values.route.host }}
+  host: {{ . }}
+  {{- end }}
+  {{- with .Values.route.path }}
+  path: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "mcp-gateway.fullname" . }}
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: {{ .Values.route.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy }}
+    {{- with .Values.route.tls.certificate }}
+    certificate: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.route.tls.key }}
+    key: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.route.tls.caCertificate }}
+    caCertificate: {{ . | quote }}
+    {{- end }}
+    {{- if and (eq .Values.route.tls.termination "reencrypt") .Values.route.tls.destinationCACertificate }}
+    destinationCACertificate: {{ .Values.route.tls.destinationCACertificate | quote }}
+    {{- end }}
+  wildcardPolicy: None
+{{- end }}

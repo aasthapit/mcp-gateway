@@ -1,0 +1,39 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: trivy-image-scan
+  namespace: mcp-gateway
+  labels:
+    app.kubernetes.io/part-of: mcp-gateway
+spec:
+  description: Fail when the image has unfixed-or-fixed vulnerabilities at the given severities; also emits an SBOM.
+  params:
+    - name: image
+      type: string
+    - name: severity
+      type: string
+      default: HIGH,CRITICAL
+    - name: trivy-image
+      type: string
+      default: docker.io/aquasec/trivy:0.69.1
+  workspaces:
+    - name: dockerconfig
+  results:
+    - name: sbom-path
+  steps:
+    - name: scan
+      image: $(params.trivy-image)
+      env:
+        - { name: DOCKER_CONFIG, value: $(workspaces.dockerconfig.path) }
+        - { name: TRIVY_CACHE_DIR, value: /tmp/trivy }
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities: { drop: [ALL] }
+      script: |
+        #!/bin/sh
+        set -eu
+        trivy image --format cyclonedx --output /tmp/sbom.cdx.json "$(params.image)"
+        printf '/tmp/sbom.cdx.json' > "$(results.sbom-path.path)"
+        trivy image --scanners vuln --severity "$(params.severity)" --ignore-unfixed=false \
+          --exit-code 1 --no-progress "$(params.image)"

@@ -1,0 +1,22 @@
+apiVersion: v2
+name: mcp-gateway
+description: Enterprise MCP gateway (FastMCP 4.1) packaged for OpenShift (restricted SCC, Routes, ESO, HPA, PDB, NetworkPolicy).
+type: application
+# Chart version: bump on any template/values change.
+version: 0.1.0
+# Gateway image tag deployed by default (image.tag overrides). Bumped by the build pipeline.
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"
+home: https://github.com/aasthapit/mcp-gateway
+sources:
+  - https://github.com/aasthapit/mcp-gateway
+keywords:
+  - mcp
+  - gateway
+  - fastmcp
+  - openshift
+maintainers:
+  - name: aasthapit
+annotations:
+  # Routes, ExternalSecrets and ServiceMonitors are optional CRDs; see values.yaml toggles.
+  openshift.io/minimum-version: "4.16"

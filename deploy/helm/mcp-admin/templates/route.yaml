@@ -1,0 +1,36 @@
+{{- if .Values.route.enabled }}
+{{- /* Same host, two paths: / -> ui, /api -> api. The router picks the longest matching path. */}}
+{{- range $component := list "ui" "api" }}
+{{- $c := index $.Values $component }}
+{{- if $c.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "mcp-admin.fullname" $ }}-{{ $component }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "mcp-admin.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+  annotations:
+    {{- toYaml $.Values.route.annotations | nindent 4 }}
+spec:
+  {{- with $.Values.route.host }}
+  host: {{ . }}
+  {{- end }}
+  {{- if eq $component "api" }}
+  path: {{ $.Values.route.apiPath }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "mcp-admin.fullname" $ }}-{{ $component }}
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: {{ $.Values.route.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $.Values.route.tls.insecureEdgeTerminationPolicy }}
+  wildcardPolicy: None
+---
+{{- end }}
+{{- end }}
+{{- end }}

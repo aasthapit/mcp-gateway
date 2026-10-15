@@ -1,0 +1,13 @@
+apiVersion: v2
+name: mcp-admin
+description: Admin API (Fastify) and UI (React) for the MCP gateway policy store. Skeleton for WP5 - set the images and env.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"
+home: https://github.com/aasthapit/mcp-gateway
+sources:
+  - https://github.com/aasthapit/mcp-gateway
+keywords: [mcp, admin, openshift]
+maintainers:
+  - name: aasthapit
