@@ -1,0 +1,734 @@
+<title>MCP Gateway Handbook</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: fixed-width section nav on the left, one reading column on the right; nav collapses
+     into a disclosure above the content on phones. Teal accent on a cool, slightly green neutral. */
+  :root {
+    --bg: #f5f7f6;
+    --surface: #ffffff;
+    --surface-2: #eef2f0;
+    --fg: #1b2420;
+    --muted: #5b6a63;
+    --line: #d9e0dc;
+    --accent: #0e6b6b;
+    --accent-ink: #ffffff;
+    --accent-soft: #dff0ee;
+    --code-bg: #edf1ef;
+    --code-fg: #1f2a26;
+    --warn-bg: #fbf1dc;
+    --warn-fg: #6d4a00;
+    --ok-bg: #e2f2e6;
+    --ok-fg: #1d5c33;
+    --shadow: 0 1px 2px rgba(20, 40, 35, .06);
+    --font-display: "Source Serif 4", "Iowan Old Style", Georgia, serif;
+    --font-body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1513; --surface: #151d1a; --surface-2: #1b2521; --fg: #e4ebe8; --muted: #97a7a0;
+      --line: #273330; --accent: #5fcfc3; --accent-ink: #07211f; --accent-soft: #11302d;
+      --code-bg: #0b100e; --code-fg: #d7e0dc; --warn-bg: #3a2c0b; --warn-fg: #f1cf7a;
+      --ok-bg: #11301c; --ok-fg: #9fdcb2; --shadow: none; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1513; --surface: #151d1a; --surface-2: #1b2521; --fg: #e4ebe8; --muted: #97a7a0;
+    --line: #273330; --accent: #5fcfc3; --accent-ink: #07211f; --accent-soft: #11302d;
+    --code-bg: #0b100e; --code-fg: #d7e0dc; --warn-bg: #3a2c0b; --warn-fg: #f1cf7a;
+    --ok-bg: #11301c; --ok-fg: #9fdcb2; --shadow: none; color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.55; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .shell { display: grid; grid-template-columns: 1fr; gap: 0; max-width: 1240px; margin: 0 auto; padding-inline: 16px; padding-block: 0 48px; }
+  @media (min-width: 900px) { .shell { grid-template-columns: 250px minmax(0, 1fr); gap: 40px; padding-inline: 24px; } }
+
+  .masthead { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; padding-block: 20px 14px; border-bottom: 1px solid var(--line); }
+  .masthead .brand { font-family: var(--font-display); font-weight: 600; font-size: 1.25rem; letter-spacing: .01em; }
+  .masthead .brand small { font-family: var(--font-body); font-weight: 400; color: var(--muted); font-size: .85rem; margin-left: 10px; }
+  .masthead .meta { font-size: .8rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 14px; }
+  .masthead .meta code { font-size: .78rem; }
+
+  nav.toc { padding-block: 16px; }
+  @media (min-width: 900px) { nav.toc { position: sticky; top: env(safe-area-inset-top, 0px); align-self: start; max-height: 100vh; overflow-y: auto; padding-block: 24px; } }
+  nav.toc details { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+  nav.toc summary { cursor: pointer; padding: 10px 14px; font-weight: 600; font-size: .85rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); list-style: none; }
+  nav.toc summary::-webkit-details-marker { display: none; }
+  nav.toc summary::after { content: "\25BE"; float: right; }
+  nav.toc details[open] summary::after { content: "\25B4"; }
+  @media (min-width: 900px) {
+    nav.toc details { border: 0; background: transparent; }
+    nav.toc summary { pointer-events: none; padding: 0 0 8px; }
+    nav.toc summary::after, nav.toc details[open] summary::after { content: none; }
+  }
+  nav.toc ol { list-style: none; margin: 0; padding: 4px 8px 10px; }
+  @media (min-width: 900px) { nav.toc ol { padding: 0; } }
+  nav.toc li.group { margin-top: 12px; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 6px 8px 2px; }
+  nav.toc li.group:first-child { margin-top: 0; }
+  nav.toc a { display: block; padding: 5px 8px; border-radius: 6px; color: var(--fg); text-decoration: none; font-size: .92rem; border-left: 2px solid transparent; }
+  nav.toc a:hover { background: var(--surface-2); }
+  nav.toc a.active { border-left-color: var(--accent); background: var(--accent-soft); color: var(--fg); }
+
+  main { min-width: 0; padding-block: 24px 0; }
+  main > section { padding-block: 8px 40px; border-bottom: 1px solid var(--line); scroll-margin-top: 16px; }
+  main > section:last-child { border-bottom: 0; }
+  .prose { max-width: 70ch; }
+  h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 600; line-height: 1.2; text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(1.9rem, 3.4vw, 2.5rem); margin-block: 10px 14px; }
+  h2 { font-size: 1.55rem; margin-block: 24px 10px; }
+  h3 { font-size: 1.15rem; margin-block: 26px 8px; }
+  h4 { font-size: 1rem; font-family: var(--font-body); margin-block: 18px 6px; }
+  .eyebrow { font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  p { margin-block: 0 12px; }
+  .lede { font-size: 1.12rem; color: var(--fg); max-width: 64ch; }
+  ul, ol { margin-block: 0 12px; padding-left: 1.3em; }
+  li { margin-block: 3px; }
+  li > ul { margin-top: 4px; }
+  code { font-family: var(--font-mono); font-size: .86em; background: var(--code-bg); color: var(--code-fg); padding: .08em .35em; border-radius: 4px; }
+  pre { position: relative; background: var(--code-bg); color: var(--code-fg); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin-block: 8px 16px; font-size: .84rem; line-height: 1.5; }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  pre .copy { position: absolute; top: 8px; right: 8px; font: 600 .72rem var(--font-body); letter-spacing: .04em; text-transform: uppercase; background: var(--surface); color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 3px 8px; cursor: pointer; }
+  pre .copy:hover { color: var(--fg); }
+  pre .copy.done { color: var(--ok-fg); border-color: var(--ok-fg); }
+
+  .table-wrap { overflow-x: auto; margin-block: 8px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  th { font-size: .74rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; background: var(--surface-2); }
+  tbody tr:last-child td { border-bottom: 0; }
+  td code { white-space: nowrap; }
+  .num { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 8px 8px 0; margin-block: 12px 18px; max-width: 70ch; }
+  .callout.warn { border-left-color: var(--warn-fg); background: var(--warn-bg); color: var(--warn-fg); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-block: 16px 20px; }
+  .fact { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+  .fact .k { font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .fact .v { font-family: var(--font-display); font-size: 1.05rem; margin-top: 4px; }
+  .fact .d { font-size: .85rem; color: var(--muted); margin-top: 2px; }
+
+  /* request path diagram */
+  .flow { display: grid; gap: 10px; margin-block: 14px 20px; }
+  .flow .lane { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+  .flow .lane-label { flex-basis: 100%; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .flow .node { flex: 1 1 150px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; box-shadow: var(--shadow); }
+  .flow .node.ours { border-color: var(--accent); }
+  .flow .node b { display: block; font-size: .9rem; }
+  .flow .node span { display: block; font-size: .8rem; color: var(--muted); margin-top: 3px; }
+  .flow .arrow { align-self: center; color: var(--muted); font-size: 1.2rem; padding-inline: 2px; }
+  .flow .tag { display: inline-block; font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 1px 6px; margin-bottom: 4px; }
+
+  .steps { counter-reset: step; list-style: none; padding: 0; margin-block: 8px 18px; max-width: 70ch; }
+  .steps > li { position: relative; padding-left: 40px; margin-block: 10px; }
+  .steps > li::before { counter-increment: step; content: counter(step); position: absolute; left: 0; top: 1px; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font: 600 .85rem var(--font-body); display: grid; place-items: center; }
+  .pill { display: inline-block; font-size: .72rem; font-weight: 600; letter-spacing: .04em; border-radius: 999px; padding: 2px 9px; vertical-align: middle; }
+  .pill.ok { background: var(--ok-bg); color: var(--ok-fg); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn-fg); }
+  .pill.muted { background: var(--surface-2); color: var(--muted); }
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-block: 8px 16px; }
+  .two > div { min-width: 0; }
+  .two h4 { margin-top: 4px; }
+  footer { grid-column: 1 / -1; color: var(--muted); font-size: .85rem; padding-block: 24px 0; border-top: 1px solid var(--line); }
+  @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="shell">
+  <header class="masthead">
+    <div class="brand">MCP Gateway <small>handbook</small></div>
+    <div class="meta">
+      <span>FastMCP 4.1 · Python 3.12 · MongoDB 8 · OpenShift</span>
+      <span>Source: <a href="https://github.com/aasthapit/mcp-gateway">github.com/aasthapit/mcp-gateway</a></span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Sections">
+    <details open>
+      <summary>Contents</summary>
+      <ol>
+        <li class="group">Overview</li>
+        <li><a href="#overview">What it does</a></li>
+        <li><a href="#glance">At a glance</a></li>
+        <li class="group">How it works</li>
+        <li><a href="#request-path">Request path</a></li>
+        <li><a href="#policy-model">Policy model</a></li>
+        <li><a href="#hot-reload">Hot reload</a></li>
+        <li><a href="#protocol">Protocol and statelessness</a></li>
+        <li><a href="#security">Security model</a></li>
+        <li><a href="#admin">Admin API and UI</a></li>
+        <li><a href="#observability">Observability and limits</a></li>
+        <li class="group">Setup</li>
+        <li><a href="#local">Local stack</a></li>
+        <li><a href="#client">Connect a client</a></li>
+        <li><a href="#write-policy">Write policy</a></li>
+        <li><a href="#add-upstream">Add an upstream</a></li>
+        <li><a href="#configuration">Configuration</a></li>
+        <li><a href="#openshift">Deploy to OpenShift</a></li>
+        <li class="group">Operate</li>
+        <li><a href="#operations">SLOs and alerts</a></li>
+        <li><a href="#reference">Reference</a></li>
+      </ol>
+    </details>
+  </nav>
+
+  <main>
+    <section id="overview">
+      <div class="eyebrow">Overview</div>
+      <h1>One MCP endpoint, a different tool set for every caller</h1>
+      <p class="lede">The gateway sits in front of any number of upstream MCP servers and presents them as a single streamable-HTTP endpoint. Each request is answered with exactly the tools the caller is allowed to see: a guest set for anonymous clients, more for clients that present a valid JWT. The allow-lists live in MongoDB, are edited through an admin UI, and reach every running replica within about half a second without a restart.</p>
+      <div class="prose">
+        <p>It exists for one reason: an organisation wants to expose internal MCP servers to many clients (IDE agents, CI bots, partner integrations) through one address, and control per client which tools are reachable, with that control changeable at runtime by people who are not the gateway's operators.</p>
+        <p>What a client sees when it calls <code>tools/list</code>:</p>
+        <ul>
+          <li><b>No token</b>: the tools in every toolset granted to <code>anonymous</code>. In the shipped seed that is <code>sample-public_time_now</code> and <code>sample-public_echo</code>.</li>
+          <li><b>A valid bearer token</b>: the guest set plus every toolset whose grant matches the token's claims (a realm role, a group, a scope, a client id). A developer with the <code>mcp-developer</code> role also gets <code>sample-private_secret_lookup</code>.</li>
+          <li><b>A bad token</b>: HTTP 401 with an RFC 9728 challenge. A broken token is never downgraded to guest.</li>
+        </ul>
+        <p>Calling a tool that is not on the caller's list answers exactly like calling a tool that does not exist, so the existence of hidden tools is not revealed.</p>
+      </div>
+    </section>
+
+    <section id="glance">
+      <div class="eyebrow">At a glance</div>
+      <h2>The moving parts</h2>
+      <div class="facts">
+        <div class="fact"><div class="k">Gateway</div><div class="v">Python 3.12, FastMCP 4.1.0</div><div class="d">one uvicorn worker per pod, stateless, both MCP protocol eras</div></div>
+        <div class="fact"><div class="k">Policy store</div><div class="v">MongoDB 8 replica set</div><div class="d">four collections, JSON-Schema validators, change streams</div></div>
+        <div class="fact"><div class="k">Identity</div><div class="v">Any OIDC issuer</div><div class="d">JWT via JWKS; Keycloak ships for local dev</div></div>
+        <div class="fact"><div class="k">Admin</div><div class="v">Fastify API + React UI</div><div class="d">transactional writes, history, live preview</div></div>
+        <div class="fact"><div class="k">Deployment</div><div class="v">Helm on OpenShift</div><div class="d">restricted SCC, Routes, HPA, PDB, NetworkPolicy, ESO, Argo CD</div></div>
+        <div class="fact"><div class="k">Propagation</div><div class="v">About 0.34 s</div><div class="d">edit to effect on every replica, measured on the local stack</div></div>
+      </div>
+      <div class="prose">
+        <p>Repository layout, by directory:</p>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Directory</th><th>What</th></tr></thead>
+        <tbody>
+          <tr><td><code>gateway/</code></td><td>The FastMCP gateway (uv project): auth, policy, upstream registry, middleware, smoke and drills</td></tr>
+          <tr><td><code>admin-api/</code></td><td>Fastify 5 admin API over the policy collections</td></tr>
+          <tr><td><code>admin-ui/</code></td><td>React 19 + Vite admin UI with Keycloak PKCE login</td></tr>
+          <tr><td><code>schemas/</code></td><td>JSON Schemas for <code>upstreams</code>, <code>toolsets</code>, <code>grants</code>, <code>meta</code>; generate the Mongo validators and feed ajv and pydantic</td></tr>
+          <tr><td><code>sample-upstreams/</code></td><td>Two tiny FastMCP servers used by the local stack and the tests</td></tr>
+          <tr><td><code>local/</code></td><td>Compose stack: Mongo, Keycloak realm, sample upstreams, OTel collector, seed data</td></tr>
+          <tr><td><code>deploy/</code></td><td>Helm charts, Percona MongoDB CR, Argo CD apps, Tekton pipeline, conftest policy, alert tests</td></tr>
+          <tr><td><code>loadtest/</code></td><td>k6 scenarios and the runner behind <code>make loadtest</code></td></tr>
+          <tr><td><code>docs/</code></td><td>Plan, research notes, twelve ADRs, runbook, perf and SLOs</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="request-path">
+      <div class="eyebrow">How it works</div>
+      <h2>Request path</h2>
+      <div class="prose"><p>Every MCP request crosses two of our own layers before FastMCP forwards it upstream. The first decides who is calling; the second decides what they may see. Neither keeps per-connection state, so any replica can answer any request.</p></div>
+      <div class="flow">
+        <div class="lane">
+          <div class="lane-label">Data plane, per request</div>
+          <div class="node"><b>MCP client</b><span><code>POST /mcp</code>, optional <code>Authorization: Bearer</code></span></div>
+          <div class="arrow">→</div>
+          <div class="node"><b>Route / Service</b><span>edge TLS, 1 h timeout, cookies off</span></div>
+          <div class="arrow">→</div>
+          <div class="node ours"><span class="tag">ours</span><b>Bearer auth (ASGI)</b><span>none → anonymous · valid JWT → user · invalid → 401</span></div>
+          <div class="arrow">→</div>
+          <div class="node"><b>FastMCP, stateless</b><span>era negotiation, origin guard</span></div>
+          <div class="arrow">→</div>
+          <div class="node ours"><span class="tag">ours</span><b>PolicyMiddleware</b><span>filters <code>tools/list</code>, blocks <code>tools/call</code>, hides resources and prompts</span></div>
+          <div class="arrow">→</div>
+          <div class="node"><b>ProxyProvider per upstream</b><span>namespace prefix, gateway's own credentials, client token stripped</span></div>
+          <div class="arrow">→</div>
+          <div class="node"><b>Upstream MCP server</b><span>HTTP or SSE; stdio in dev only</span></div>
+        </div>
+        <div class="lane">
+          <div class="lane-label">Control plane, per pod</div>
+          <div class="node"><b>admin-ui</b><span>React, Keycloak PKCE login</span></div>
+          <div class="arrow">→</div>
+          <div class="node"><b>admin-api</b><span>ajv validation, one transaction: document + <code>meta.version</code> + history</span></div>
+          <div class="arrow">→</div>
+          <div class="node"><b>MongoDB</b><span><code>upstreams</code> <code>toolsets</code> <code>grants</code> <code>meta</code></span></div>
+          <div class="arrow">→</div>
+          <div class="node ours"><span class="tag">ours</span><b>PolicyWatcher</b><span>change stream + 30 s version poll, debounce, atomic snapshot swap</span></div>
+          <div class="arrow">→</div>
+          <div class="node ours"><span class="tag">ours</span><b>PolicySnapshot</b><span>immutable, memoised <code>effective_tools(principal)</code>; also drives upstream mounts</span></div>
+        </div>
+      </div>
+      <div class="prose">
+        <p>Three details matter in that picture:</p>
+        <ul>
+          <li>The auth layer wraps only <code>/mcp</code>. Health, metrics, the RFC 9728 metadata document and the token-guarded <code>/internal/*</code> routes are plain Starlette routes outside it.</li>
+          <li>List filtering alone would not be enough: a client can call a tool it never listed. The middleware checks both, and a denied call raises the same "unknown tool" error FastMCP itself produces.</li>
+          <li>Dev-only gateway tools such as <code>gateway_whoami</code> bypass the allow-list; the policy governs proxied upstream tools only.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="policy-model">
+      <h2>Policy model</h2>
+      <div class="prose">
+        <p>The policy is four collections in the <code>mcp_gateway</code> database. The JSON Schemas under <code>schemas/</code> are the single source of truth: a script turns them into Mongo <code>$jsonSchema</code> validators, the admin API validates request bodies with them through ajv, and the gateway's pydantic models mirror them.</p>
+      </div>
+      <div class="two">
+        <div>
+          <h4><code>upstreams</code></h4>
+          <p>One document per proxied server. The <code>_id</code> becomes the tool namespace, so upstream tool <code>echo</code> on <code>sample-public</code> is <code>sample-public_echo</code>.</p>
+<pre><code>{
+  "_id": "github",
+  "displayName": "GitHub MCP",
+  "enabled": true,
+  "transport": "http",
+  "url": "http://mcp-github.mcp-upstreams.svc:8080/mcp",
+  "auth": { "type": "static_bearer", "secretRef": "upstream-github" },
+  "sessionMode": "shared",
+  "protocolMode": "2026-07-28",
+  "timeoutsMs": { "connect": 2000, "call": 60000 },
+  "cacheTtlSec": 300
+}</code></pre>
+        </div>
+        <div>
+          <h4><code>toolsets</code></h4>
+          <p>Named allow-lists. Entries are namespaced tool names or <code>fnmatch</code> globs. An explicit <code>deny</code> wins over every allow in the caller's union.</p>
+<pre><code>{
+  "_id": "public-basics",
+  "enabled": true,
+  "allow": ["sample-public_time_now", "sample-public_echo"],
+  "deny": []
+}
+{
+  "_id": "engineering",
+  "enabled": true,
+  "allow": ["sample-private_*"],
+  "deny": []
+}</code></pre>
+        </div>
+        <div>
+          <h4><code>grants</code></h4>
+          <p>Who gets which toolsets. Subject kinds: <code>anonymous</code> (matches everyone, the guest floor), <code>authenticated</code> (any valid token), <code>claim</code> (a dotted path into the claims with <code>eq</code>, <code>in</code>, <code>contains</code> or <code>exists</code>), <code>client_id</code>.</p>
+<pre><code>{
+  "_id": "developers",
+  "enabled": true,
+  "subject": {
+    "kind": "claim",
+    "path": "realm_access.roles",
+    "op": "contains",
+    "value": "mcp-developer"
+  },
+  "toolsets": ["public-basics", "engineering"]
+}</code></pre>
+        </div>
+        <div>
+          <h4><code>meta</code> and <code>policy_history</code></h4>
+          <p><code>meta</code> holds one document, <code>{_id: "policy", version}</code>. Every admin write bumps the version in the same transaction, so pods can confirm freshness with one cheap read. <code>policy_history</code> is append-only: collection, id, actor, time, before and after.</p>
+<pre><code>{ "_id": "policy", "version": 268,
+  "updatedAt": "2026-10-15T23:12:04Z",
+  "updatedBy": "admin1" }</code></pre>
+        </div>
+      </div>
+      <div class="callout">
+        <p><b>Evaluation rule.</b> Effective tools = the union of <code>allow</code> across the enabled toolsets of every enabled grant that matches the principal, minus the union of their <code>deny</code>. Nothing is allowed by default. Anonymous grants apply to everyone, so an authenticated user always sees at least the guest set. The result is memoised per principal key (kind plus the sorted ids of the matching grants), so a busy pod computes it once per distinct caller shape.</p>
+      </div>
+      <div class="prose">
+        <p>Secrets never enter Mongo. An upstream's <code>auth.secretRef</code> names a file under <code>GATEWAY_UPSTREAM_SECRETS_DIR</code>, which is a mounted Kubernetes Secret in the cluster and an environment variable fallback on a laptop.</p>
+      </div>
+    </section>
+
+    <section id="hot-reload">
+      <h2>Hot reload</h2>
+      <div class="prose">
+        <p>Each gateway process runs one <code>PolicyWatcher</code>. It has two ways of learning about a change and one way of applying it.</p>
+      </div>
+      <ol class="steps">
+        <li><b>Initial load.</b> On startup the watcher reads all four collections with <code>readConcern: majority</code>, builds an immutable snapshot and swaps it in. <code>/readyz</code> stays 503 until that first load succeeds. If Mongo is down the pod keeps retrying and serves nothing meanwhile.</li>
+        <li><b>Change stream.</b> One database-level change stream per process, filtered to the four collections. Any event is debounced for 250 ms into a single full reload. The resume token is kept in memory; a resumable error reopens from it, and a lost history or an invalidate falls back to a full reload.</li>
+        <li><b>Version poll.</b> Every 30 s the watcher reads <code>meta.version</code> and reloads if it moved. This covers a dead stream and Mongo tiers that cap change streams; correctness never depends on the stream, only latency does.</li>
+        <li><b>Apply.</b> After a swap the watcher reconciles the upstream registry (mount new, unmount disabled, re-mount changed) and publishes <code>notifications/tools/list_changed</code> on an in-process subscription bus. Modern clients with an open <code>subscriptions/listen</code> stream are told at once; everyone else re-lists when the 30 s <code>ttlMs</code> hint on their last list expires.</li>
+      </ol>
+      <div class="prose">
+        <p>A failed reload keeps the previous snapshot in service and the pod stays ready. <code>gateway_policy_staleness_seconds</code> measures the time since the store last confirmed the snapshot and drives the stale-policy alert. Measured on the local stack, an edit shows up in the next <code>tools/list</code> after about 0.34 s, and a forced replica-set step-down is absorbed by the driver's own resume.</p>
+      </div>
+    </section>
+
+    <section id="protocol">
+      <h2>Protocol and statelessness</h2>
+      <div class="prose">
+        <p>The current MCP specification revision, 2026-07-28, removed protocol-level sessions and the <code>Mcp-Session-Id</code> header. Every request carries its protocol version and client capabilities in <code>_meta</code>, and the specification allows the tool list to vary by the authorization presented on the request. That is exactly the gateway's model, so modern clients need nothing special from the infrastructure.</p>
+        <p>Older clients still open with an <code>initialize</code> handshake. The gateway serves them with <code>stateless_http=True</code>: it never mints a session id and refuses the legacy GET stream. Those clients lose push notifications and simply re-list on their own schedule. The consequence for operations is pleasant: no sticky sessions, no shared session store, and horizontal scaling by adding pods.</p>
+        <p>Server push for modern clients uses the SDK's <code>subscriptions/listen</code>: a long-lived POST whose response is an SSE stream. FastMCP writes a <code>: ping</code> comment every 15 s on every open stream, so the OpenShift router's 30 s idle timeout never fires on them; the Route's 1 h timeout annotation is there for slow tool calls.</p>
+      </div>
+    </section>
+
+    <section id="security">
+      <h2>Security model</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Request</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>No <code>Authorization</code> header</td><td>Anonymous principal. With <code>GATEWAY_ALLOW_ANONYMOUS=false</code> the gateway is strict and answers 401 instead.</td></tr>
+          <tr><td><code>Bearer</code> JWT that verifies</td><td>User principal with <code>sub</code>, <code>client_id</code>, scopes and claims. Verified against the issuer's JWKS, with <code>iss</code>, <code>aud</code>, <code>exp</code> and <code>nbf</code> checked and an explicit asymmetric algorithm allow-list.</td></tr>
+          <tr><td>Bad signature, expired, wrong issuer or audience, unknown key id after a throttled JWKS refresh, disallowed algorithm, malformed, non-Bearer scheme</td><td><code>401 {"error":"invalid_token"}</code> plus <code>WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource", error="invalid_token"</code></td></tr>
+          <tr><td>Token in the query string or a cookie</td><td>Ignored, treated as absent. The specification forbids tokens in URLs.</td></tr>
+        </tbody>
+      </table></div>
+      <div class="prose">
+        <ul>
+          <li><b>Client tokens stop at the edge.</b> FastMCP proxies forward inbound headers upstream by default; the gateway turns that off and authenticates to each upstream with its own credential from a Secret. The specification says a resource server must not pass client tokens through.</li>
+          <li><b>JWKS caching.</b> Keys are cached per key id for an hour and refreshed on an unknown id no more than every five minutes. During an IdP outage known keys keep verifying, the fetch is bounded at 3 s, and refreshes happen in the background.</li>
+          <li><b>Host and origin.</b> FastMCP's DNS-rebinding guard is on; extra hosts are listed in <code>GATEWAY_ALLOWED_HOSTS</code>.</li>
+          <li><b>Container hygiene.</b> UBI 9 minimal images, numeric non-root user, group-0 writable app dir, read-only root filesystem with an emptyDir on <code>/tmp</code>, all capabilities dropped, ports 8080 and 9090 only. The conftest policy in <code>deploy/policy</code> fails the build if a rendered Deployment breaks any of that.</li>
+          <li><b>Prod guards.</b> With <code>GATEWAY_ENV=prod</code> the settings refuse stdio upstreams, a non-https public base URL or issuer, a static policy source and console logs.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="admin">
+      <h2>Admin API and UI</h2>
+      <div class="prose">
+        <p>Operators and policy owners never touch Mongo directly. The admin API is the only writer, and it follows one rule for every mutation: validate the body against the shared schema, then in one transaction with <code>writeConcern: majority</code> write the document, increment <code>meta.version</code> and append a <code>policy_history</code> entry. A PUT with unchanged content is a no-op. Deleting a toolset a grant still references, or an upstream a toolset pattern still names, answers 409 with the referencing ids.</p>
+        <p>Admin calls need a bearer token with <code>aud=mcp-admin</code> and the realm role <code>mcp-admin</code>. In the shipped Keycloak realm only admins receive that audience: the <code>mcp-admin</code> resource client's role is a composite of the realm role, so a developer's token is accepted by the gateway and rejected by the admin API.</p>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Endpoint</th><th>What</th></tr></thead>
+        <tbody>
+          <tr><td><code>GET /api/{upstreams|toolsets|grants}</code></td><td><code>{items, version}</code></td></tr>
+          <tr><td><code>PUT /api/{collection}/:id</code></td><td>Create or replace; 400 with <code>details: [{path, message}]</code> on schema errors; returns the new version</td></tr>
+          <tr><td><code>DELETE /api/{collection}/:id</code></td><td>409 with <code>referencedBy</code> when something still points at it</td></tr>
+          <tr><td><code>GET /api/history?collection=&amp;id=&amp;limit=</code></td><td>Newest first, with before and after</td></tr>
+          <tr><td><code>GET /api/catalog</code></td><td>Every tool across mounted upstreams, proxied from the gateway's <code>/internal/catalog</code>; feeds the UI's tool picker</td></tr>
+          <tr><td><code>POST /api/preview</code></td><td><code>{kind:"anonymous"}</code>, <code>{claims:{…}}</code> or <code>{token:"…"}</code> (decoded without verification, labelled as such) → tools and matching grants for that principal</td></tr>
+          <tr><td><code>GET /api/upstreams/health</code>, <code>POST /api/upstreams/reload</code></td><td>Proxied from the gateway's internal routes</td></tr>
+        </tbody>
+      </table></div>
+      <div class="prose">
+        <p>The UI has five pages: Upstreams (schema-driven form, live health badges, a reload button, <code>secretRef</code> as a name never a value), Toolsets (allow and deny editors with a catalog picker and a live "matches N catalog tools" hint for each glob), Grants (subject builder and toolset multi-select), Preview (effective tools for a guest, a claims JSON or a pasted token) and History (table with a before/after diff). Every save shows the resulting <code>meta.version</code>.</p>
+        <p>The gateway's <code>/internal/*</code> routes require the <code>X-Internal-Token</code> header, compared in constant time to <code>GATEWAY_INTERNAL_TOKEN</code>, and in the cluster a NetworkPolicy limits them to the admin-api pod. The admin chart reads that token from the gateway's own Secret so the two sides can never disagree.</p>
+      </div>
+    </section>
+
+    <section id="observability">
+      <h2>Observability and limits</h2>
+      <div class="two">
+        <div>
+          <h4>Metrics</h4>
+          <p>Prometheus text on <code>/metrics</code> and on the separate <code>:9090</code> listener. The names you will build dashboards on:</p>
+          <ul>
+            <li><code>gateway_requests_total{method,era,principal_kind,outcome}</code> and <code>gateway_request_duration_seconds</code></li>
+            <li><code>gateway_tool_calls_total{tool,upstream,principal_kind,outcome}</code> and <code>gateway_tool_call_duration_seconds</code></li>
+            <li><code>gateway_policy_denials_total{tool,principal_kind}</code>, <code>gateway_policy_version</code>, <code>gateway_policy_staleness_seconds</code>, <code>gateway_change_stream_up</code></li>
+            <li><code>gateway_upstream_up{upstream}</code>, <code>gateway_upstream_probe_seconds</code>, <code>gateway_upstream_errors_total{upstream,kind}</code>, <code>gateway_upstreams_mounted</code></li>
+            <li><code>gateway_http_responses_total{route,code}</code>, <code>gateway_rate_limited_total</code>, <code>gateway_response_truncated_total</code>, <code>gateway_open_listen_streams</code></li>
+            <li><code>gateway_auth_results_total{result}</code></li>
+          </ul>
+        </div>
+        <div>
+          <h4>Tracing and audit</h4>
+          <p><code>GATEWAY_TELEMETRY_MODE=native</code> installs the OpenTelemetry SDK with an OTLP exporter (http/protobuf or grpc). FastMCP emits one server span per MCP request, delegate spans into the mounted proxies and client spans to upstreams, with context carried in <code>_meta</code>. The gateway adds the principal kind, client id, policy version and upstream as span attributes, continues an incoming <code>traceparent</code>, and stamps <code>trace_id</code> on every log line written inside a span. The default is <code>off</code>.</p>
+          <p>Logs are JSON lines. Every <code>tools/call</code> and every denial produces one audit line with principal kind, <code>sub</code>, client id, tool, upstream and outcome; every auth rejection carries a reason code.</p>
+        </div>
+      </div>
+      <h4>Limits, all per pod</h4>
+      <div class="prose">
+        <ul>
+          <li><b>Rate limit:</b> token buckets keyed <code>user:&lt;sub&gt;</code> for users and <code>ip:&lt;client ip&gt;</code> for guests, 50 and 20 requests per second by default. The client IP comes from <code>X-Forwarded-For</code> only when the peer is in <code>GATEWAY_TRUSTED_PROXIES</code>; the chart trusts the router network. A rejected request gets JSON-RPC error <code>-32000</code>.</li>
+          <li><b>Response size:</b> results above <code>GATEWAY_RESPONSE_MAX_BYTES</code> (1 MB) become one truncated text block. While this is on, listed tools lose <code>outputSchema</code>, because a truncated result cannot match it; set the limit to 0 to keep the schemas.</li>
+          <li><b>Body size:</b> requests above 1 MiB get 413 before they reach MCP.</li>
+          <li><b>Graceful shutdown:</b> on SIGTERM the pod turns <code>/readyz</code> to 503, closes listen streams with their final result so clients re-listen elsewhere, then gives in-flight calls up to 45 s. A unit test proves the sequence; the rolling-restart drill shows zero 5xx behind a balancer.</li>
+        </ul>
+        <p>N replicas admit N times the configured rate. Cluster-wide limits would need a shared store and are deliberately left for a later version.</p>
+      </div>
+    </section>
+
+    <section id="local">
+      <div class="eyebrow">Setup</div>
+      <h2>Local stack</h2>
+      <div class="prose">
+        <p>Everything runs on one machine: Mongo as a single-node replica set (change streams and transactions need one), Keycloak with a dev realm, the two sample upstreams and an OTel collector. The gateway and the admin services run on the host for hot reload.</p>
+        <p><b>Prerequisites:</b> Podman (or Docker), Python 3.12 or newer, <code>uv</code>, Node 22 or newer. On macOS:</p>
+      </div>
+<pre><code>brew install podman docker-compose uv
+podman machine init &amp;&amp; podman machine start</code></pre>
+      <div class="prose"><p>Then from the repository root:</p></div>
+<pre><code>make up          # build + start Mongo (rs0), Keycloak, sample upstreams, otel-collector; apply validators
+make seed        # load local/seed/*.json and bump meta.version
+make token       # dev1 access token (KC_USER=admin1 for admin1)
+make decode      # pretty-print its claims
+make smoke       # infra, gateway (guest / garbage bearer / live allow-list edit / catalog / dev1) and admin API checks
+make admin-dev   # admin UI http://localhost:3000 (admin1/admin1) + API :3001 + gateway :8080
+make down        # stop (make clean also drops volumes)</code></pre>
+      <div class="prose"><p>Docker instead of Podman: <code>make up COMPOSE="docker compose"</code>. To run the gateway alone:</p></div>
+<pre><code>cd gateway
+uv sync                      # Python 3.12 venv with fastmcp==4.1.*
+uv run mcp-gateway           # http://localhost:8080/mcp, metrics on :9090
+curl -s localhost:8080/readyz</code></pre>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Service</th><th>Host port</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>mongo</code></td><td class="num">27017</td><td><code>mongo:8</code>, replica set <code>rs0</code>, root user from <code>local/.env</code> (default <code>root</code> / <code>devpass</code>)</td></tr>
+          <tr><td><code>keycloak</code></td><td class="num">8180</td><td>Realm <code>mcp</code>; users <code>dev1/dev1</code> (role <code>mcp-developer</code>) and <code>admin1/admin1</code> (roles <code>mcp-admin</code> and <code>mcp-developer</code>); client-credentials client <code>ci-runner</code></td></tr>
+          <tr><td><code>sample-public</code></td><td class="num">8081</td><td>Tools <code>time_now</code>, <code>echo</code></td></tr>
+          <tr><td><code>sample-private</code></td><td class="num">8082</td><td>Tool <code>secret_lookup</code></td></tr>
+          <tr><td><code>otel-collector</code></td><td class="num">4317 / 4318</td><td>OTLP in, debug exporter out; <code>make traces</code></td></tr>
+          <tr><td>gateway (host)</td><td class="num">8080 / 9090</td><td><code>uv run mcp-gateway</code> or part of <code>make admin-dev</code></td></tr>
+          <tr><td>admin-api / admin-ui (host)</td><td class="num">3001 / 3000</td><td><code>make admin-dev</code>; <code>make admin-up</code> runs them as containers instead</td></tr>
+        </tbody>
+      </table></div>
+      <div class="callout warn"><p>Keycloak imports <code>local/keycloak/realm.json</code> on its first start only. <code>make up</code> runs a sync script that adds any newer clients to an existing realm, so an old volume keeps working; <code>make clean up</code> starts fresh.</p></div>
+      <div class="prose"><p>What <code>make smoke</code> proves, in order: the replica set is primary and seeded, Keycloak issues a dev1 token with the right audience and role, both upstreams answer, the gateway is ready, the RFC 9728 document is served, a garbage bearer gets 401, a guest sees exactly the public toolset and cannot call the private tool, a toolset edit propagates within 2 s and arrives as a push notification on an open listen stream, the catalog and upstream health answer, dev1 sees the engineering toolset, and the same edit through the admin API behaves the same way and is recorded in history.</p></div>
+    </section>
+
+    <section id="client">
+      <h2>Connect a client</h2>
+      <div class="prose"><p>Any MCP client that speaks streamable HTTP works. With the FastMCP Python client, a string <code>auth=</code> becomes the bearer header:</p></div>
+<pre><code>from fastmcp import Client
+
+async with Client("http://localhost:8080/mcp") as c:                  # guest
+    print([t.name for t in await c.list_tools()])  # sample-public_time_now, sample-public_echo
+    print((await c.call_tool("sample-public_echo", {"text": "hi"})).data)
+
+async with Client("http://localhost:8080/mcp", auth=token) as c:      # dev1
+    print([t.name for t in await c.list_tools()])  # + sample-private_secret_lookup
+    print((await c.call_tool("gateway_whoami", {})).data)             # dev only: the resolved principal</code></pre>
+      <div class="prose"><p>Raw HTTP for the modern protocol era needs the <code>_meta</code> envelope plus the mirrored headers; this is what the smoke and load tests send:</p></div>
+<pre><code>curl -s -X POST http://localhost:8080/mcp \
+  -H "Accept: application/json, text/event-stream" \
+  -H "MCP-Protocol-Version: 2026-07-28" -H "Mcp-Method: tools/list" \
+  -H "Authorization: Bearer $(make -s token)" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{
+        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities":{}}}}'</code></pre>
+      <div class="prose"><p>A client that only learns about authentication from a 401 will not discover that elevated tools exist, because guests get 200. The RFC 9728 metadata document is published regardless, and <code>GATEWAY_ALLOW_ANONYMOUS=false</code> turns on the strict behaviour for deployments that want the challenge.</p></div>
+    </section>
+
+    <section id="write-policy">
+      <h2>Write policy</h2>
+      <div class="prose"><p>Through the UI: sign in as <code>admin1</code> at <code>http://localhost:3000</code>, open Grants, tick a toolset, save, and watch the version number change. Through the API, the same thing with curl:</p></div>
+<pre><code># admin1 token carries aud=mcp-admin and the mcp-admin role
+TOKEN=$(make -s token-admin)
+
+# a new toolset
+curl -s -X PUT localhost:3001/api/toolsets/reporting \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"enabled":true,"allow":["sample-public_time_now"],"deny":[]}'
+
+# grant it to every authenticated caller
+curl -s -X PUT localhost:3001/api/grants/all-users \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"enabled":true,"priority":80,"subject":{"kind":"authenticated"},"toolsets":["reporting"]}'
+
+# what would a CI client see?
+curl -s -X POST localhost:3001/api/preview \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"claims":{"azp":"ci-runner"}}'</code></pre>
+      <div class="prose">
+        <p>Claim paths follow your identity provider: Keycloak realm roles live at <code>realm_access.roles</code>, Entra app roles at <code>roles</code> with scopes in <code>scp</code>, Okta groups at <code>groups</code>. The <code>contains</code> operator also understands space-separated string claims such as <code>scope</code>.</p>
+        <p>Rolling back is a matter of reading the previous document from <code>policy_history</code> and putting it back; the runbook has the exact steps.</p>
+      </div>
+    </section>
+
+    <section id="add-upstream">
+      <h2>Add an upstream</h2>
+      <div class="prose"><p>Upstreams are documents in the <code>upstreams</code> collection; the gateway mounts a new one live on the next reload and unmounts a disabled one just as quickly.</p></div>
+      <ol class="steps">
+        <li><b>Make it reachable over HTTP.</b> In the cluster, upstreams are Deployments in the <code>mcp-upstreams</code> namespace, which the gateway's NetworkPolicy already allows. A stdio-only server gets a small HTTP shim; stdio from inside the gateway pod is refused in production.</li>
+        <li><b>Provide its credential.</b> Add a key to the gateway's upstream-secrets Secret (ESO in prod); the file name is what <code>secretRef</code> refers to. Locally, set <code>GATEWAY_UPSTREAM_SECRET_&lt;REF&gt;</code>.</li>
+        <li><b>Create the document</b> through the admin API or UI. Pin <code>protocolMode</code> to <code>2026-07-28</code> for FastMCP 4 servers and use <code>sessionMode: shared</code>; auto-negotiation costs an extra round trip per connection and per-request sessions re-initialise on every call.</li>
+        <li><b>Grant its tools.</b> Nothing is visible until a toolset allows <code>&lt;id&gt;_*</code> or specific names and a grant hands that toolset to someone. The catalog picker in the UI lists the discovered tools as soon as the upstream is mounted.</li>
+      </ol>
+      <div class="prose"><p>A dead upstream stays mounted and marked down: its tools keep listing from cache, calls to it fail fast with a clear connect error, the other upstreams are unaffected, and readiness does not flip. A missing secret leaves the upstream degraded and unmounted with the reason visible on the health page.</p></div>
+    </section>
+
+    <section id="configuration">
+      <h2>Configuration</h2>
+      <div class="prose"><p>Everything is an environment variable with the <code>GATEWAY_</code> prefix (pydantic-settings). The ones you will set in practice:</p></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Variable</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>GATEWAY_ENV</code></td><td><code>dev</code></td><td><code>prod</code> enables the guards: https only, JSON logs, no stdio upstreams, Mongo policy only</td></tr>
+          <tr><td><code>GATEWAY_PUBLIC_BASE_URL</code></td><td><code>http://localhost:8080</code></td><td>External origin; used in the RFC 9728 document and as the token audience resource</td></tr>
+          <tr><td><code>GATEWAY_OIDC_ISSUER</code></td><td>local Keycloak</td><td>Expected <code>iss</code>; JWKS found via OIDC discovery (<code>GATEWAY_JWKS_URI</code> skips discovery)</td></tr>
+          <tr><td><code>GATEWAY_JWT_AUDIENCE</code></td><td><code>mcp-gateway</code></td><td>Required member of <code>aud</code></td></tr>
+          <tr><td><code>GATEWAY_JWT_ALGORITHMS</code></td><td><code>RS256</code></td><td>Asymmetric only; <code>none</code> and <code>HS*</code> refused</td></tr>
+          <tr><td><code>GATEWAY_ALLOW_ANONYMOUS</code></td><td><code>true</code></td><td><code>false</code> = 401 for requests without a token</td></tr>
+          <tr><td><code>GATEWAY_MONGO_URI</code> / <code>GATEWAY_MONGO_DB</code></td><td>local replica set / <code>mcp_gateway</code></td><td>Policy store and upstreams; must be a replica set</td></tr>
+          <tr><td><code>GATEWAY_POLICY_POLL_SEC</code></td><td><code>30</code></td><td>Fallback poll of <code>meta.version</code></td></tr>
+          <tr><td><code>GATEWAY_UPSTREAM_SECRETS_DIR</code></td><td><code>/etc/gateway/upstream-secrets</code></td><td>One file per <code>secretRef</code></td></tr>
+          <tr><td><code>GATEWAY_INTERNAL_TOKEN</code></td><td>unset</td><td>Enables <code>/internal/*</code>; unset = those routes answer 404</td></tr>
+          <tr><td><code>GATEWAY_TOOLS_LIST_TTL_SEC</code></td><td><code>30</code></td><td><code>ttlMs</code> hint on list results for modern clients</td></tr>
+          <tr><td><code>GATEWAY_RATE_LIMIT_ANONYMOUS_RPS</code> / <code>_USER_RPS</code></td><td><code>20</code> / <code>50</code></td><td>Per pod; <code>GATEWAY_RATE_LIMIT_ENABLED=false</code> turns it off</td></tr>
+          <tr><td><code>GATEWAY_TRUSTED_PROXIES</code></td><td><code>[]</code></td><td>IPs or CIDRs whose <code>X-Forwarded-For</code> is believed</td></tr>
+          <tr><td><code>GATEWAY_RESPONSE_MAX_BYTES</code></td><td><code>1000000</code></td><td>Truncate larger results; <code>0</code> keeps <code>outputSchema</code> in listings</td></tr>
+          <tr><td><code>GATEWAY_TELEMETRY_MODE</code> / <code>GATEWAY_OTLP_ENDPOINT</code></td><td><code>off</code> / unset</td><td><code>native</code> exports spans over OTLP</td></tr>
+          <tr><td><code>GATEWAY_SHUTDOWN_GRACE_SEC</code></td><td><code>45</code></td><td>Keep below <code>terminationGracePeriodSeconds</code> minus the preStop sleep</td></tr>
+        </tbody>
+      </table></div>
+      <div class="prose"><p>The admin API uses the same shape with an <code>ADMIN_</code> prefix: <code>ADMIN_MONGO_URI</code>, <code>ADMIN_OIDC_ISSUER</code>, <code>ADMIN_JWT_AUDIENCE</code> (<code>mcp-admin</code>), <code>ADMIN_REQUIRED_ROLE</code>, <code>ADMIN_ROLES_CLAIM</code>, <code>ADMIN_CORS_ORIGINS</code>, <code>ADMIN_GATEWAY_INTERNAL_URL</code> and <code>ADMIN_GATEWAY_INTERNAL_TOKEN</code>. The UI reads its settings at runtime from <code>/config.json</code>, built from <code>ADMIN_UI_*</code> variables. The full tables are in each component's README.</p></div>
+    </section>
+
+    <section id="openshift">
+      <h2>Deploy to OpenShift</h2>
+      <div class="prose">
+        <p>Two Helm charts, <code>mcp-gateway</code> and <code>mcp-admin</code>, plus manifests for the namespaces, a Percona MongoDB cluster, Argo CD applications and a Tekton pipeline. Cluster prerequisites: OpenShift 4.16 or newer, the Percona Operator for MongoDB, the External Secrets Operator (prod), OpenShift GitOps, OpenShift Pipelines for the build, and user workload monitoring for the ServiceMonitor. The charts have been validated by rendering and policy checks; applying them to a live cluster is the one step that has not yet been exercised.</p>
+      </div>
+      <h4>First install on a dev cluster</h4>
+<pre><code>oc apply -f deploy/openshift/namespaces/namespaces.yaml
+oc apply -f deploy/openshift/mongodb/operator-subscription.yaml      # then approve the InstallPlan
+oc get csv -n mcp-gateway -w                                          # wait for Succeeded
+oc apply -n mcp-gateway -f deploy/openshift/mongodb/app-users-secret.example.yaml   # edit passwords first
+oc apply -n mcp-gateway -f deploy/openshift/mongodb/psmdb-cluster.yaml
+oc get psmdb -n mcp-gateway -w                                        # STATUS ready (3-5 min)
+
+helm upgrade --install mcp-gateway deploy/helm/mcp-gateway -n mcp-gateway \
+  -f deploy/helm/mcp-gateway/values-dev.yaml \
+  --set route.host=mcp-dev.apps.&lt;cluster-domain&gt; \
+  --set config.OIDC_ISSUER=https://&lt;idp&gt;/realms/mcp \
+  --set secrets.values.mongoUri='mongodb://gateway:&lt;pw&gt;@mcp-mongo-rs0.mcp-gateway.svc.cluster.local:27017/mcp_gateway?replicaSet=rs0&amp;tls=true&amp;tlsCAFile=/etc/gateway/mongo-ca/ca.crt' \
+  --set secrets.values.internalToken="$(openssl rand -hex 24)"
+
+helm upgrade --install mcp-admin deploy/helm/mcp-admin -n mcp-gateway \
+  -f deploy/helm/mcp-admin/values-dev.yaml --set route.host=mcp-admin-dev.apps.&lt;cluster-domain&gt; \
+  --set api.env.ADMIN_OIDC_ISSUER=https://&lt;idp&gt;/realms/mcp --set ui.env.ADMIN_UI_OIDC_AUTHORITY=https://&lt;idp&gt;/realms/mcp \
+  --set secrets.values.mongoUri='mongodb://admin-api:&lt;pw&gt;@mcp-mongo-rs0.mcp-gateway.svc.cluster.local:27017/mcp_gateway?replicaSet=rs0&amp;tls=true&amp;tlsCAFile=/etc/admin/mongo-ca/ca.crt'
+
+oc rollout status deploy/mcp-gateway -n mcp-gateway
+curl -s https://mcp-dev.apps.&lt;cluster-domain&gt;/readyz
+cd gateway &amp;&amp; uv run python -m mcp_gateway.smoke https://mcp-dev.apps.&lt;cluster-domain&gt;</code></pre>
+      <div class="prose">
+        <p>Keep the release names <code>mcp-gateway</code> and <code>mcp-admin</code>: the admin chart's internal URL, its reference to the gateway's Secret and the NetworkPolicy selectors are built from them. The identity provider needs a public PKCE client <code>mcp-admin-ui</code> and must put <code>aud=mcp-admin</code> only on admins' tokens; the local realm file shows one way to do that.</p>
+      </div>
+      <h4>What the gateway chart renders</h4>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Object</th><th>Settings that matter</th></tr></thead>
+        <tbody>
+          <tr><td>Deployment</td><td>One uvicorn worker per pod; <code>maxSurge 1, maxUnavailable 0</code>; 5 s preStop sleep then a 60 s grace period; restricted-SCC security context; read-only root; ConfigMap checksum triggers a rolling restart on config change; soft anti-affinity across nodes</td></tr>
+          <tr><td>Route</td><td>Edge TLS (re-encrypt wired for when the pod terminates TLS); <code>haproxy.router.openshift.io/timeout: 1h</code>; <code>disable_cookies: "true"</code> because every replica serves every request</td></tr>
+          <tr><td>HPA and PDB</td><td>Prod: 3 to 10 replicas on 60 % CPU, optional custom metric <code>gateway_open_listen_streams</code>; PDB <code>minAvailable: 2</code>. With the HPA on, the Deployment carries no <code>replicas</code> field so Argo CD and the HPA never fight</td></tr>
+          <tr><td>NetworkPolicy</td><td>Default deny both ways; ingress from the router namespace and the admin-api pod on 8080 and from monitoring on 9090; egress to DNS, the Percona pods, the <code>mcp-upstreams</code> namespace, non-RFC1918 443 for the IdP and the OTel collector</td></tr>
+          <tr><td>Secrets</td><td>Prod: ExternalSecrets from a <code>ClusterSecretStore</code> for the Mongo URI, the internal token, the upstream credentials (mounted as files) and the Percona users. Dev: plain Secrets from values; the chart refuses that combination when <code>config.ENV=prod</code></td></tr>
+          <tr><td>ServiceMonitor and PrometheusRule</td><td>Scrape every 30 s; six alerts, each unit-tested with promtool as part of <code>make deploy-check</code></td></tr>
+        </tbody>
+      </table></div>
+      <h4>Production through GitOps</h4>
+      <div class="prose">
+        <p>Production is never installed by hand. The Tekton pipeline tests, builds with buildah, scans with Trivy, promotes the image by digest with skopeo and commits the digest into <code>values-prod.yaml</code> on the release branch; Argo CD renders and syncs. Rollback is a <code>git revert</code> of that bump. The prod render fails on purpose if <code>route.host</code> is empty, because the gateway refuses a non-https public base URL in prod.</p>
+        <p>Before anything is applied, <code>make deploy-check</code> runs locally and in CI: <code>helm lint --strict</code>, a template render per overlay, kubeconform against the Kubernetes 1.32 schemas plus the Route, ExternalSecret, ServiceMonitor, PrometheusRule, Percona, Argo CD and Tekton CRDs, the conftest policy for the restricted SCC and workload hygiene, promtool rule tests, and kube-score as an advisory pass.</p>
+      </div>
+    </section>
+
+    <section id="operations">
+      <div class="eyebrow">Operate</div>
+      <h2>SLOs and alerts</h2>
+      <div class="prose"><p>Targets per gateway pod, measured inside the cluster. Each has a k6 threshold in the load test and, where it can be watched in production, an alert.</p></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>SLO</th><th>Target</th><th>Local result</th></tr></thead>
+        <tbody>
+          <tr><td><code>tools/list</code>, cached</td><td>p95 under 150 ms</td><td class="num">7.0 ms</td></tr>
+          <tr><td><code>tools/list</code>, cold with per-request sessions</td><td>p95 under 600 ms</td><td class="num">12.3 ms</td></tr>
+          <tr><td><code>tools/call</code> gateway overhead</td><td>p95 under 300 ms</td><td class="num">13.2 ms</td></tr>
+          <tr><td>Availability of <code>/mcp</code></td><td>99.9 % non-5xx monthly</td><td class="num">0 5xx</td></tr>
+          <tr><td>Rolling restart</td><td>zero 5xx during a rollout</td><td class="num">0 with preStop</td></tr>
+          <tr><td>Policy propagation</td><td>every pod within 2 s, never later than 5 min</td><td class="num">0.34 s</td></tr>
+        </tbody>
+      </table></div>
+      <div class="prose">
+        <p>Local figures come from a laptop with fast local upstreams and describe the gateway's own overhead, not production latency. The same test found one process holds the SLOs up to about 180 MCP requests per second and saturates near 200, so the guidance is to target roughly 100 requests per second per pod and scale out, never add workers. Re-run <code>make loadtest</code> in-cluster before setting HPA targets.</p>
+      </div>
+      <h4>Alerts, each with a runbook entry</h4>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Alert</th><th>Fires when</th></tr></thead>
+        <tbody>
+          <tr><td><code>McpGatewayPolicyStale</code></td><td>A pod has not confirmed its policy snapshot against the store for more than 5 minutes</td></tr>
+          <tr><td><code>McpGatewayChangeStreamDown</code></td><td>The change stream has been down for more than 2 minutes (the version poll keeps correctness meanwhile)</td></tr>
+          <tr><td><code>McpGatewayUpstreamDown</code></td><td>A mounted upstream fails its health probe</td></tr>
+          <tr><td><code>McpGatewayHigh5xxRatio</code></td><td>More than 2 % of <code>/mcp</code> responses are 5xx over 5 minutes</td></tr>
+          <tr><td><code>McpGatewayDenialSpike</code></td><td>Policy denials jump, usually a grant removed by mistake or a client probing</td></tr>
+          <tr><td><code>McpGatewayRateLimitSpike</code></td><td>Rate limiting rejects far more than usual</td></tr>
+        </tbody>
+      </table></div>
+      <div class="prose">
+        <p>The runbook (<code>docs/runbook.md</code>) walks each alert from symptom to checks to action, and also covers rolling back a policy change from <code>policy_history</code>, rotating the internal token, upstream credentials and Mongo credentials, and scaling. <code>make drills</code> rehearses the failure modes locally: a Mongo primary restart under traffic, an upstream going down and back, the identity provider refusing or unreachable, and a rolling restart of two processes behind a balancer.</p>
+      </div>
+    </section>
+
+    <section id="reference">
+      <h2>Reference</h2>
+      <h4>Gateway endpoints</h4>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Path</th><th>What</th></tr></thead>
+        <tbody>
+          <tr><td><code>POST /mcp</code></td><td>MCP streamable HTTP, both protocol eras, stateless</td></tr>
+          <tr><td><code>GET /healthz</code></td><td>Process up</td></tr>
+          <tr><td><code>GET /readyz</code></td><td>503 until the lifespan finished, a policy snapshot is loaded, at least one upstream is mounted and the critical probes pass; JSON reports policy version, staleness and stream state</td></tr>
+          <tr><td><code>GET /metrics</code></td><td>Prometheus text; also on the metrics port</td></tr>
+          <tr><td><code>GET /.well-known/oauth-protected-resource</code></td><td>RFC 9728 metadata: resource, authorization servers, bearer methods, scopes</td></tr>
+          <tr><td><code>GET /internal/catalog</code></td><td>Every tool across mounted upstreams, with input schemas</td></tr>
+          <tr><td><code>GET /internal/upstreams/health</code>, <code>POST /internal/upstreams/reload</code></td><td>Probe results; force a policy reload and reconcile</td></tr>
+          <tr><td><code>GET /internal/effective-tools</code></td><td>Tools a principal sees: <code>?kind=anonymous</code> or <code>?claims=&lt;base64url JSON&gt;</code>, plus the matching grants</td></tr>
+        </tbody>
+      </table></div>
+      <h4>Tests and checks</h4>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Command</th><th>Covers</th></tr></thead>
+        <tbody>
+          <tr><td><code>cd gateway &amp;&amp; uv run pytest</code></td><td>236 tests: unit, integration against the local stack (skips when it is down), the shutdown sequence; drills are opt-in</td></tr>
+          <tr><td><code>make admin-test</code></td><td>admin-api 41 and admin-ui 21 tests (vitest, testing-library)</td></tr>
+          <tr><td><code>make smoke</code></td><td>End-to-end flows described under Local stack</td></tr>
+          <tr><td><code>make lint</code></td><td>ruff, prettier, schema freshness via pre-commit</td></tr>
+          <tr><td><code>make deploy-check</code></td><td>Helm, kubeconform, conftest, promtool, kube-score</td></tr>
+          <tr><td><code>make loadtest</code>, <code>make drills</code>, <code>make traces</code></td><td>k6 load test, failure drills, one traced call through the local collector</td></tr>
+        </tbody>
+      </table></div>
+      <div class="prose">
+        <p>GitHub Actions runs lint, the schema build, admin tests, a compose config check, deploy-check, the gateway unit tests and the gateway integration tests on a compose stack, on every push and pull request.</p>
+        <p>Design decisions are recorded as ADRs in <code>docs/adr</code>: proxy wiring and header forwarding, list cache hints, push notifications in stateless mode, SSE keep-alives, runtime unmounting, what <code>server/discover</code> returns, JWT verification, policy reload, upstream timeouts, OpenShift packaging, the admin API, and limits with telemetry. The original research and the plan the system was built from are in <code>docs/PLAN.md</code> and <code>docs/research</code>.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>MCP Gateway handbook · built from the repository's READMEs, ADRs, runbook and perf notes as of 2026-10-15.</footer>
+</div>
+
+<script>
+(function () {
+  // Copy buttons on every code block
+  document.querySelectorAll('pre').forEach(function (pre) {
+    var btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'copy'; btn.textContent = 'Copy';
+    btn.setAttribute('aria-label', 'Copy code');
+    btn.addEventListener('click', function () {
+      var text = pre.querySelector('code') ? pre.querySelector('code').innerText : pre.innerText;
+      function done() { btn.textContent = 'Copied'; btn.classList.add('done'); setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1500); }
+      function fallback() {
+        try { var r = document.createRange(); r.selectNodeContents(pre.querySelector('code') || pre); var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = 'Selected'; setTimeout(function () { btn.textContent = 'Copy'; }, 1500); } catch (e) {}
+      }
+      try { navigator.clipboard.writeText(text).then(done, fallback); } catch (e) { fallback(); }
+    });
+    pre.appendChild(btn);
+  });
+
+  // Highlight the section in view
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var byId = {};
+  links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+  var sections = Array.prototype.slice.call(document.querySelectorAll('main > section[id]'));
+  function setActive(id) { links.forEach(function (a) { a.classList.toggle('active', a === byId[id]); }); }
+  if ('IntersectionObserver' in window) {
+    var visible = {};
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { visible[e.target.id] = e.isIntersecting ? e.intersectionRatio : 0; });
+      var best = null, bestRatio = 0;
+      sections.forEach(function (s) { if ((visible[s.id] || 0) > bestRatio) { best = s.id; bestRatio = visible[s.id]; } });
+      if (best) setActive(best);
+    }, { rootMargin: '-10% 0px -70% 0px', threshold: [0, 0.1, 0.5, 1] });
+    sections.forEach(function (s) { io.observe(s); });
+  }
+  var initial = (location.hash || '#overview').slice(1);
+  if (byId[initial]) setActive(initial);
+
+  // On phones, close the contents disclosure after choosing a section
+  var details = document.querySelector('nav.toc details');
+  links.forEach(function (a) { a.addEventListener('click', function () { if (window.innerWidth < 900 && details) details.open = false; }); });
+  if (window.innerWidth < 900 && details) details.open = false;
+})();
+</script>

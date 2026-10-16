@@ -5,7 +5,7 @@ with per-caller tool allow-lists (a guest set for anonymous callers, more for JW
 stored in MongoDB and hot-reloaded on every replica. Python 3.12 + FastMCP 4.1, Node admin
 API/UI, OpenShift deployment.
 
-**Start with [docs/PLAN.md](docs/PLAN.md)** — goals, research findings, architecture, data
+**Start with [docs/handbook.html](docs/handbook.html)** (what it does, how it works, setup; open the file in a browser) **and [docs/PLAN.md](docs/PLAN.md)** — goals, research findings, architecture, data
 model, work packages and open decisions. Research notes live in [docs/research](docs/research).
 
 ## Layout
